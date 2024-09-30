@@ -1,6 +1,6 @@
 import pandas as pd
 from pandas.tseries.holiday import (
-    AbstractHolidayCalendar, Holiday, nearest_workday,
+    AbstractHolidayCalendar, Holiday, nearest_workday, next_workday,
     USMemorialDay, USLaborDay, USMartinLutherKingJr,
     USPresidentsDay, USThanksgivingDay, GoodFriday, USColumbusDay
 )
@@ -29,7 +29,7 @@ class SIFMAHolidayCalendar(AbstractHolidayCalendar):
         # Get the first Friday of the month
         first_day = pd.Timestamp(gf.year, gf.month, 1)
         first_friday = first_day + pd.offsets.Week(weekday=4)
-        # Include Good Friday if it's not the first Friday of the month
+        # Include Good Friday if it's not the first Friday of the month (NFP publishing days)
         if gf != first_friday:
             filtered_good_fridays.append(gf)
 
@@ -40,40 +40,29 @@ class SIFMAHolidayCalendar(AbstractHolidayCalendar):
                        ] + filtered_good_fridays
 
 
-# Define the NYC holiday calendar
-class NewYorkHolidayCalendar(AbstractHolidayCalendar):
+class NYFedHolidayCalendar(AbstractHolidayCalendar):
     rules = [
-        Holiday('NewYearsDay', month=1, day=1, observance=nearest_workday),
+        Holiday('NewYearsDay', month=1, day=1, observance=next_workday),
         USMartinLutherKingJr,
         USPresidentsDay,
         USMemorialDay,
-        Holiday('IndependenceDay', month=7, day=4, observance=nearest_workday),
+        Holiday('Juneteenth', month=6, day=19, observance=next_workday, start_date='2022-01-01'),
+        Holiday('IndependenceDay', month=7, day=4, observance=next_workday),
         USLaborDay,
-        USThanksgivingDay,
-        Holiday('ChristmasDay', month=12, day=25, observance=nearest_workday),
-        # Add Juneteenth starting from 2022
-        Holiday('Juneteenth', month=6, day=19, observance=nearest_workday, start_date='2022-01-01'),
-        # Include additional federal holidays
-        Holiday('VeteransDay', month=11, day=11, observance=nearest_workday),
         USColumbusDay,
+        Holiday('VeteransDay', month=11, day=11, observance=next_workday),
+        USThanksgivingDay,
+        Holiday('ChristmasDay', month=12, day=25, observance=next_workday),
     ]
 
 
-# Instantiate the holiday calendars
-sifma_calendar = SIFMAHolidayCalendar()
-nyc_calendar = NewYorkHolidayCalendar()
-
-# Generate holiday lists
-sifma_holidays = sifma_calendar.holidays(start='1990-01-01', end='2050-12-31')
-nyc_holidays = nyc_calendar.holidays(start='1990-01-01', end='2050-12-31')
-
-# Combine the holidays and remove duplicates
-combined_holidays = pd.to_datetime(sorted(set(sifma_holidays.tolist() + nyc_holidays.tolist())))
+sifma_holidays = SIFMAHolidayCalendar().holidays(start='1990-01-01', end='2050-12-31')
+nyfed_holidays = NYFedHolidayCalendar().holidays(start='1990-01-01', end='2050-12-31')
 
 
-class NYTHolidays:
-    def __init__(self):
-        self.holidays = combined_holidays
+class Holidays:
+    def __init__(self, calendar_class):
+        self.holidays = calendar_class
         self.holiday_set = set(self.holidays)
 
     def is_biz_day(self, dt):
@@ -99,29 +88,22 @@ class NYTHolidays:
         biz_days = [dt for dt in dates if self.is_biz_day(dt)]
         return biz_days
 
-    def count_days(self, st, et):
-        return len(self.biz_date_range(st, et))
 
-
-# Instantiate the NYT holidays
-NYT = NYTHolidays()
+# Instantiate the SIFMA and NYFED holidays
+SIFMA = Holidays(sifma_holidays)
+NYFED = Holidays(nyfed_holidays)
 
 if __name__ == '__main__':
+    # Check if a date is a business day
+    test_date = datetime.datetime(2024, 1, 15)
+    print(f"Is {test_date.date()} a business day? {SIFMA.is_biz_day(test_date)}")
+    print(f"Previous business day before {test_date.date()}: {SIFMA.prev_biz_day(test_date).date()}")
+    print(f"Next business day after {test_date.date()}: {SIFMA.next_biz_day(test_date).date()}")
+
     # Example usage
     st = datetime.datetime(2024, 1, 1)
     et = datetime.datetime(2024, 2, 1)
-    print(f"Business days between {st.date()} and {et.date()}: {NYT.count_days(st, et)}")
-
-    # Check if a date is a business day
-    test_date = datetime.datetime(2024, 1, 15)
-    print(f"Is {test_date.date()} a business day? {NYT.is_biz_day(test_date)}")
-
-    # Get the previous and next business day
-    print(f"Previous business day before {test_date.date()}: {NYT.prev_biz_day(test_date).date()}")
-    print(f"Next business day after {test_date.date()}: {NYT.next_biz_day(test_date).date()}")
-
-    # Get the list of business days in the range
-    biz_days = NYT.biz_date_range(st, et)
+    biz_days = SIFMA.biz_date_range(st, et)
     print(f"Business days between {st.date()} and {et.date()}:")
     for day in biz_days:
         print(day.date())
