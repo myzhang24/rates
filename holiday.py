@@ -1,3 +1,16 @@
+"""
+This module define the SIFMA instance, which supports
+1. is_biz_day
+2. prev_biz_day
+3. next_biz_day
+4. biz_day_range
+queries for the SIFMA holiday calendar.
+The SIFMA calendar is used to determine business days in the ModFol adjustment of SOFR OIS swap accrual start and end dates.
+
+It also defines the NYFED instance, which generates days on which SOFR index is published.
+"""
+
+
 import pandas as pd
 from pandas.tseries.holiday import (
     AbstractHolidayCalendar, Holiday, nearest_workday, next_workday,

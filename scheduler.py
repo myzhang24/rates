@@ -1,6 +1,11 @@
+"""
+This module generates the swap schedule for a USD SOFR OIS swap with market convention.
+Roll convention of End of Month and IMM are supported.
+"""
+
 import pandas as pd
 from dateutil.relativedelta import relativedelta
-from holiday import SIFMA  # Import the NYT holidays module
+from holiday import SIFMA
 
 
 class SOFRSwapScheduler:
@@ -60,34 +65,66 @@ class SOFRSwapScheduler:
 
     def get_third_wednesday(self, year, month):
         first_day = pd.Timestamp(year=year, month=month, day=1)
-        first_wednesday = first_day + pd.offsets.Week(weekday=2)
-        return first_wednesday + pd.DateOffset(weeks=2)
+        # Find the first Wednesday of the month
+        first_wednesday = first_day + pd.DateOffset(days=(2 - first_day.weekday()) % 7)
+        # Get the third Wednesday
+        third_wednesday = first_wednesday + pd.DateOffset(weeks=2)
+        return third_wednesday
 
     def generate_imm_dates(self, start_date, end_date):
         imm_dates = []
-        current_year = start_date.year
-
-        while True:
+        current_date = start_date
+        while current_date <= end_date:
+            year = current_date.year
             for month in [3, 6, 9, 12]:
-                imm_date = self.get_third_wednesday(current_year, month)
-                if imm_date > end_date:
-                    return imm_dates  # Exit if the IMM date exceeds the end date
-                if imm_date >= start_date:
+                imm_date = self.get_third_wednesday(year, month)
+                if start_date <= imm_date <= end_date:
                     imm_dates.append(imm_date)
-            current_year += 1
+            current_date += relativedelta(years=1)
+        imm_dates.sort()
+        return imm_dates
+
+    def get_next_imm_date(self, date):
+        date = pd.Timestamp(date)
+        year = date.year
+        # IMM months are March, June, September, December
+        months = [3, 6, 9, 12]
+
+        # Generate IMM dates for the current and next year
+        for y in [year, year + 1]:
+            for m in months:
+                imm_date = self.get_third_wednesday(y, m)
+                if imm_date >= date:
+                    return imm_date
+        raise ValueError("Unable to find the next IMM date.")
 
     def generate_leg_schedule(self, frequency, day_count_convention, payment_delay=2):
         schedule = []
-        current_date = self.start_date
+
+        freq_num = int(frequency[:-1])
+        freq_unit = frequency[-1].upper()
+
+        if freq_unit == 'M':
+            freq_in_months = freq_num
+        elif freq_unit == 'Y':
+            freq_in_months = freq_num * 12
+        else:
+            raise ValueError("Unsupported frequency unit. Use 'M' for months or 'Y' for years.")
 
         if self.roll_convention == 'IMM':
-            imm_dates = self.generate_imm_dates(self.start_date, self.end_date)
-            date_list = imm_dates
-        else:
-            freq_num = int(frequency[:-1])
-            freq_unit = frequency[-1].upper()
-            date_list = []
+            if freq_in_months % 3 != 0:
+                raise ValueError("For IMM roll convention, frequency must be a multiple of 3 months.")
 
+            # Generate all IMM dates between start_date and end_date
+            imm_dates = self.generate_imm_dates(self.start_date, self.end_date)
+            interval = freq_in_months // 3
+            date_list = imm_dates[::interval]
+            # Ensure the last date is the end date adjusted to IMM
+            if date_list[-1] < self.end_date:
+                date_list.append(self.get_next_imm_date(self.end_date))
+        else:
+            date_list = []
+            current_date = self.start_date
             while current_date < self.end_date:
                 next_date = current_date
                 if freq_unit == 'M':
@@ -103,6 +140,7 @@ class SOFRSwapScheduler:
                 date_list.append(next_date)
                 current_date = next_date
 
+        # Build the schedule
         for i, next_date in enumerate(date_list):
             adj_current_date = self.adjust_date(self.start_date if i == 0 else date_list[i - 1])
             adj_next_date = self.adjust_date(next_date)
