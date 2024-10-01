@@ -51,6 +51,7 @@ class USDSOFRCurve:
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
         self.knot_dates = [next_biz_day] + effective_dates + swap_dates if next_biz_day not in effective_dates else\
             effective_dates + swap_dates
+        self.knot_values = 0.03 * np.ones((len(self.knot_dates), 1))
 
     def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_swaps):
         """
