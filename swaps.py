@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 from holiday import SIFMA
 
 
-class SOFRSwapScheduler:
+class SOFRSwap:
     def __init__(
             self,
             ref_date,
@@ -233,7 +233,7 @@ class SOFRSwapScheduler:
 
 
 if __name__ == '__main__':
-    scheduler = SOFRSwapScheduler(
+    scheduler = SOFRSwap(
         ref_date='2024-01-12',  # Trade date
         tenor='5Y',
         day_count_fixed='ACT/360',  # Both legs use ACT/360

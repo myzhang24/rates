@@ -1,26 +1,56 @@
 import numpy as np
+import pandas as pd
 from scipy.optimize import least_squares
 from datetime import datetime, timedelta
 from holiday import SIFMA, NYFED
-from scheduler import SOFRSwapScheduler
-from futures import SOFR1MFutures, SOFR3MFutures
+from swaps import SOFRSwap
+from futures import SOFR1MFutures, SOFR3MFutures, get_sofr_1m_futures, get_sofr_3m_futures
 from fomc import generate_fomc_meeting_dates
 
 
-class UsdSofrCurveBuilder:
+class USDSOFRCurve:
     def __init__(self, reference_date):
-        self.reference_date = reference_date
-        self.sifma_calendar = SIFMA_Calendar()
-        self.nyfed_calendar = NYFED_Calendar()
-        self.schedule_generator = ScheduleGenerator()
-        self.futures_utility = FuturesUtility()
-        self.fomc_dates = FOMC_Dates().get_future_meetings(reference_date)
-        self.market_instruments = []
-        self.curve_nodes = []
-        self.discounts = {}
-        self.forward_rates = {}
+        self.reference_date = pd.Timestamp(reference_date)
+        self.sofr_1m_futures = None
+        self.sofr_3m_futures = None
+        self.sofr_fras = None
+        self.sofr_swaps = None
+        self.knot_dates = None
+        self.knot_values = None
+        self.initialize()
 
-    def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_ois_swaps):
+    def initialize(self):
+        self.sofr_1m_futures = {x: 100.0 for x in get_sofr_1m_futures(self.reference_date)}
+        self.sofr_3m_futures = {x: 100.0 for x in get_sofr_3m_futures(self.reference_date)}
+        self.sofr_fras = {"3x6": 0.00,
+                          "6x9": 0.00,
+                          "9x12": 0.00,
+                          "12x15": 0.00,
+                          "15x18": 0.00,
+                          "18x21": 0.00,
+                          "21x24": 0.00,
+                          "24x27": 0.00}
+        self.sofr_swaps = {"1Y": 0.00,
+                           "2Y": 0.00,
+                           "3Y": 0.00,
+                           "4Y": 0.00,
+                           "5Y": 0.00,
+                           "7Y": 0.00,
+                           "10Y": 0.00,
+                           "12Y": 0.00,
+                           "15Y": 0.00,
+                           "20Y": 0.00,
+                           "25Y": 0.00,
+                           "30Y": 0.00,
+                           "40Y": 0.00}
+        self.knot_dates = generate_fomc_meeting_dates(self.reference_date.date(),
+                                                      (self.reference_date + pd.DateOffset(years=2)).date())
+        self.knot_dates += [(self.reference_date + pd.DateOffset(years=x)).date()
+                            for x in [3, 4, 5, 7, 10, 12, 15, 20, 25, 30, 40]]
+        if self.knot_dates[0] != SIFMA.next_biz_day(self.reference_date):
+            self.knot_dates = [self.reference_date.date()] + self.knot_dates
+
+    def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_swaps):
         """
         Load market data for calibration.
 
@@ -30,12 +60,7 @@ class UsdSofrCurveBuilder:
         - sofr_fras: list of tuples (start_date, end_date, rate)
         - sofr_ois_swaps: list of tuples (tenor, rate)
         """
-        self.market_instruments = {
-            '1M_Futures': sofr_1m_futures,
-            '3M_Futures': sofr_3m_futures,
-            'FRAs': sofr_fras,
-            'OIS_Swaps': sofr_ois_swaps
-        }
+        pass
 
     def convexity_adjustment(self, start_date):
         """
@@ -47,29 +72,22 @@ class UsdSofrCurveBuilder:
         Returns:
         - adjustment: float
         """
-        time = (start_date - self.reference_date).days / 365.25
-        # Quadratic model: adjustment = a * time^2
-        a = 0.0001  # Example coefficient, should be calibrated or given
-        adjustment = a * time ** 2
-        return adjustment
+        pass
 
     def build_curve(self):
         """
         Build the USD SOFR curve by calibrating to market instruments.
         """
         # Initial guess for the optimization
-        initial_rates = [0.02] * (len(self.market_instruments['1M_Futures']) +
-                                  len(self.market_instruments['3M_Futures']) +
-                                  len(self.market_instruments['FRAs']) +
-                                  len(self.market_instruments['OIS_Swaps']))
+        initial_rates = [0.02] * len(self.knot_values)
         # Bounds for the rates
-        bounds = (0.0, 1.0)
+        bounds = (0.0, 0.20)
 
         # Optimize to minimize the difference between market and model prices
         result = least_squares(self.objective_function, initial_rates, bounds=bounds)
 
         # Extract the calibrated zero rates
-        self.curve_nodes = result.x
+        self.knot_values = result.x
 
         # Build discount factors and forward rates
         self.construct_discount_curve()
@@ -248,24 +266,5 @@ class UsdSofrCurveBuilder:
 
 # Example usage
 if __name__ == '__main__':
-    reference_date = datetime(2023, 10, 1)
-    curve_builder = UsdSofrCurveBuilder(reference_date)
-
-    # Load market data (dummy data for illustration)
-    sofr_1m_futures = [('FUT1', 0.9975)] * 13
-    sofr_3m_futures = [('FUT3M1', 0.9925)] * 16
-    sofr_fras = [
-        (reference_date + timedelta(days=30 * i), reference_date + timedelta(days=30 * (i + 1)), 0.02 + 0.0001 * i) for
-        i in range(10)]
-    sofr_ois_swaps = [(0.5, 0.02), (1, 0.022), (2, 0.025), (3, 0.0275), (5, 0.03), (7, 0.032), (10, 0.033), (15, 0.035),
-                      (20, 0.036), (30, 0.037)]
-
-    curve_builder.load_market_data(sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_ois_swaps)
-    curve_builder.build_curve()
-
-    # Get discount factor and forward rate for a specific date
-    date = reference_date + timedelta(days=365)
-    df = curve_builder.get_discount_factor(date)
-    fwd_rate = curve_builder.get_forward_rate(date)
-    print(f"Discount Factor on {date.date()}: {df}")
-    print(f"Forward Rate on {date.date()}: {fwd_rate}")
+    sofr = USDSOFRCurve("2024-10-01")
+    exit(0)

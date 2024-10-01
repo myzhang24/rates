@@ -243,6 +243,66 @@ class SOFR3MFutures(SOFRFuturesBase):
         return prev_ticker
 
 
+def get_sofr_1m_futures(reference_date):
+    """
+    Returns the tickers for the 13 consecutive live SOFR 1M futures (including stub).
+
+    Parameters:
+    - reference_date: datetime, the reference date for which the futures are live.
+
+    Returns:
+    - list of tickers for 13 consecutive SOFR 1M futures.
+    """
+    tickers = []
+    months = ['F', 'G', 'H', 'J', 'K', 'M', 'N', 'Q', 'U', 'V', 'X', 'Z']  # CME futures month codes
+    year = reference_date.year
+    month_index = reference_date.month - 1  # Index for the current month in futures code
+
+    for i in range(13):
+        ticker_month = months[month_index % 12]
+        ticker_year = str(year % 10)  # Use the last digit of the year for the ticker
+
+        ticker = f'SER{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 1M futures
+        tickers.append(ticker)
+
+        # Increment the month and adjust the year when needed
+        month_index += 1
+        if month_index % 12 == 0:
+            year += 1  # Increment the year after December
+
+    return tickers
+
+
+def get_sofr_3m_futures(reference_date):
+    """
+    Returns the tickers for the 16 consecutive live SOFR 3M futures (including stub).
+
+    Parameters:
+    - reference_date: datetime, the reference date for which the futures are live.
+
+    Returns:
+    - list of tickers for 16 consecutive SOFR 3M futures.
+    """
+    tickers = []
+    months = ['H', 'M', 'U', 'Z']  # CME quarterly futures month codes for March, June, September, December
+    year = reference_date.year
+    month_index = (reference_date.month - 1) // 3  # Quarterly month index
+
+    for i in range(16):
+        ticker_month = months[month_index % 4]
+        ticker_year = str(year % 10)  # Use the last digit of the year for the ticker
+
+        ticker = f'SFR{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 3M futures
+        tickers.append(ticker)
+
+        # Increment the quarter and adjust the year when needed
+        month_index += 1
+        if month_index % 4 == 0:
+            year += 1  # Increment the year after December quarter
+
+    return tickers
+
+
 if __name__ == '__main__':
     # Example for SOFR 1M Futures
     sofr1m = SOFR1MFutures('SERM4')
@@ -263,3 +323,12 @@ if __name__ == '__main__':
     print(f"Reference End Date: {sofr3m.reference_end_date.date()}")
     print(f"Next Ticker: {sofr3m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr3m.get_previous_ticker()}")
+
+    # Example of generation
+    reference_date = datetime(2023, 3, 15)
+    tickers_3m = get_sofr_3m_futures(reference_date)
+    tickers_1m = get_sofr_1m_futures(reference_date)
+    print(f"The 13 SOFR 1M futures as of {reference_date.date()} are")
+    print(tickers_1m)
+    print(f"The 16 SOFR 3M futures as of {reference_date.date()} are")
+    print(tickers_3m)
