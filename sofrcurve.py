@@ -43,12 +43,14 @@ class USDSOFRCurve:
                            "25Y": 0.00,
                            "30Y": 0.00,
                            "40Y": 0.00}
-        self.knot_dates = generate_fomc_meeting_dates(self.reference_date.date(),
+        meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),
                                                       (self.reference_date + pd.DateOffset(years=2)).date())
-        self.knot_dates += [(self.reference_date + pd.DateOffset(years=x)).date()
+        effective_dates = [SIFMA.next_biz_day(x, 1) for x in meeting_dates]
+        swap_dates = [SIFMA.next_biz_day((self.reference_date + pd.DateOffset(years=x)).date(), 0)
                             for x in [3, 4, 5, 7, 10, 12, 15, 20, 25, 30, 40]]
-        if self.knot_dates[0] != SIFMA.next_biz_day(self.reference_date):
-            self.knot_dates = [self.reference_date.date()] + self.knot_dates
+        next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
+        self.knot_dates = [next_biz_day] + effective_dates + swap_dates if next_biz_day not in effective_dates else\
+            effective_dates + swap_dates
 
     def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_swaps):
         """

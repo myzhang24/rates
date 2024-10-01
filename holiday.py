@@ -82,14 +82,14 @@ class Holidays:
         dt = pd.Timestamp(dt)
         return dt.dayofweek < 5 and dt not in self.holiday_set
 
-    def prev_biz_day(self, dt):
-        dt = pd.Timestamp(dt) - pd.Timedelta(days=1)
+    def prev_biz_day(self, dt, shift=1):
+        dt = pd.Timestamp(dt) - pd.Timedelta(days=shift)
         while not self.is_biz_day(dt):
             dt -= pd.Timedelta(days=1)
         return dt
 
-    def next_biz_day(self, dt):
-        dt = pd.Timestamp(dt) + pd.Timedelta(days=1)
+    def next_biz_day(self, dt, shift=1):
+        dt = pd.Timestamp(dt) + pd.Timedelta(days=shift)
         while not self.is_biz_day(dt):
             dt += pd.Timedelta(days=1)
         return dt
