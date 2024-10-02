@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares
-from datetime import datetime, timedelta
-from holiday import SIFMA, NYFED
-from swaps import SOFRSwap
+from datetime import timedelta
+from holiday import SIFMA
+from swaps import SOFRSwap, SOFRFra, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures, get_sofr_1m_futures, get_sofr_3m_futures
 from fomc import generate_fomc_meeting_dates
 
@@ -28,27 +28,13 @@ class USDSOFRCurve:
         self.sofr_1m_futures = {SOFR1MFutures(x) for x in get_sofr_1m_futures(self.reference_date)}
         self.sofr_3m_futures = {SOFR3MFutures(x) for x in get_sofr_3m_futures(self.reference_date)}
 
-        self.sofr_fras = {"3x6": 0.00,
-                          "6x9": 0.00,
-                          "9x12": 0.00,
-                          "12x15": 0.00,
-                          "15x18": 0.00,
-                          "18x21": 0.00,
-                          "21x24": 0.00,
-                          "24x27": 0.00}
-        self.sofr_swaps = {"1Y": 0.00,
-                           "2Y": 0.00,
-                           "3Y": 0.00,
-                           "4Y": 0.00,
-                           "5Y": 0.00,
-                           "7Y": 0.00,
-                           "10Y": 0.00,
-                           "12Y": 0.00,
-                           "15Y": 0.00,
-                           "20Y": 0.00,
-                           "25Y": 0.00,
-                           "30Y": 0.00,
-                           "40Y": 0.00}
+        swap_tenors = ["1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y", "12Y", "15Y", "20Y", "25Y", "30Y", "40Y"]
+        spot_date = SIFMA.next_biz_day(self.reference_date, 2)
+        self.sofr_swaps = [SOFRSwap(start_date=spot_date, tenor=x) for x in swap_tenors]
+
+        fra_tenors = ["3x6", "6x9", "9x12", "12x15", "15x18", "18x21", "21x24"]
+        fra_start_end_dates = [fra_start_end_date(self.reference_date, x) for x in fra_tenors]
+        self.sofr_fras = [SOFRFra(x, y) for x, y in fra_start_end_dates]
 
         # Initialize future knots
         meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),

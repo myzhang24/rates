@@ -9,14 +9,40 @@ from dateutil.relativedelta import relativedelta
 from holiday import SIFMA
 
 
-def swap_spot_date(ref_date):
-    date = pd.Timestamp(ref_date)
-    days_added = 0
-    while days_added < 2:
-        date += pd.Timedelta(days=1)
-        if SIFMA.is_biz_day(date):
-            days_added += 1
-    return date
+def fra_start_end_date(ref_date, short_hand):
+    ref_date = pd.Timestamp(ref_date)
+    a, b = [int(x) for x in short_hand.split("x")]
+    unadj_start = ref_date + pd.DateOffset(months=a)
+    unadj_end = ref_date + pd.DateOffset(months=b)
+    return unadj_start, unadj_end
+
+
+def adjust_date(date, convention):
+    if convention == 'Following':
+        adjusted_date = SIFMA.next_biz_day(date, 0)
+    elif convention == 'Modified Following':
+        adjusted_date = modified_following(date)
+    elif convention == 'Preceding':
+        adjusted_date = SIFMA.prev_biz_day(date, 0)
+    elif convention == 'Modified Preceding':
+        adjusted_date = modified_preceding(date)
+    else:
+        adjusted_date = date
+    return adjusted_date
+
+
+def modified_following(date):
+    candidate = SIFMA.next_biz_day(date, 0)
+    if candidate.month != date.month:
+        return SIFMA.prev_biz_day(date, 0)
+    return candidate
+
+
+def modified_preceding(date):
+    candidate = SIFMA.prev_biz_day(date, 0)
+    if candidate.month != date.month:
+        return SIFMA.next_biz_day(date, 0)
+    return candidate
 
 
 class SOFRSwap:
@@ -24,6 +50,7 @@ class SOFRSwap:
             self,
             start_date,
             tenor='5Y',
+            notional=1e6,
             frequency_fixed='12M',  # Annual payments
             frequency_float='12M',  # Annual payments
             day_count='ACT/360',
@@ -32,9 +59,9 @@ class SOFRSwap:
             pay_delay=2,
             coupon=0.05
     ):
-
         self.start_date = pd.Timestamp(start_date)
         self.tenor = tenor
+        self.notional = notional
         self.frequency_fixed = frequency_fixed
         self.frequency_float = frequency_float
         self.day_count = day_count
@@ -81,7 +108,7 @@ class SOFRSwap:
         unadj_date_list = self.generate_unadjusted_dates(self.start_date, self.end_date, freq_num, freq_unit)
 
         # Adjust the roll dates using Modified Following convention by default
-        adj_date_list = [self.adjust_date(d) for d in unadj_date_list]
+        adj_date_list = [adjust_date(d, self.business_day_convention) for d in unadj_date_list]
 
         # Build the schedule
         for i in range(len(adj_date_list) - 1):
@@ -89,7 +116,7 @@ class SOFRSwap:
             accrual_end_date = adj_date_list[i + 1]
 
             # Calculate payment date with payment delay in SIFMA calendar
-            payment_date = self.calculate_payment_date(accrual_end_date)
+            payment_date = SIFMA.next_biz_day(accrual_end_date, self.pay_delay)
 
             # Calculate day count fraction
             dcf = self.calculate_day_count_fraction(accrual_start_date, accrual_end_date)
@@ -131,49 +158,6 @@ class SOFRSwap:
                 current_date = prev_date
         return date_list
 
-    def calculate_payment_date(self, base_date):
-        payment_date = base_date
-        days_added = 0
-
-        while days_added < self.pay_delay:
-            payment_date += pd.Timedelta(days=1)
-            if SIFMA.is_biz_day(payment_date):
-                days_added += 1
-
-        payment_date = self.adjust_date(payment_date)
-        return payment_date
-
-    def adjust_date(self, date):
-        if self.business_day_convention == 'Following':
-            adjusted_date = self.following(date)
-        elif self.business_day_convention == 'Modified Following':
-            adjusted_date = self.modified_following(date)
-        elif self.business_day_convention == 'Preceding':
-            adjusted_date = self.preceding(date)
-        elif self.business_day_convention == 'Modified Preceding':
-            adjusted_date = self.modified_preceding(date)
-        else:
-            adjusted_date = date
-        return adjusted_date
-
-    def following(self, date):
-        return SIFMA.next_biz_day(date, 0)
-
-    def modified_following(self, date):
-        candidate = SIFMA.next_biz_day(date, 0)
-        if candidate.month != date.month:
-            return SIFMA.prev_biz_day(date, 0)
-        return candidate
-
-    def preceding(self, date):
-        return SIFMA.prev_biz_day(date, 0)
-
-    def modified_preceding(self, date):
-        candidate = SIFMA.prev_biz_day(date, 0)
-        if candidate.month != date.month:
-            return SIFMA.next_biz_day(date, 0)
-        return candidate
-
     def calculate_day_count_fraction(self, start_date, end_date):
         delta = end_date - start_date
         if self.day_count == 'ACT/360':
@@ -195,8 +179,63 @@ class SOFRSwap:
         }
 
 
+class SOFRFra:
+    def __init__(
+        self,
+        effective_date,  # Accrual start date
+        maturity_date,   # Accrual end date
+        notional=1e6,
+        fixed_rate=0.05,  # Contract fixed rate
+        day_count='ACT/360',
+        business_day_convention='Modified Following',
+        roll_convention='None',  # 'None', 'EOM'
+        pay_delay=2
+    ):
+        self.effective_date = pd.Timestamp(effective_date)
+        self.maturity_date = pd.Timestamp(maturity_date)
+        self.notional = notional
+        self.fixed_rate = fixed_rate
+        self.day_count = day_count
+        self.business_day_convention = business_day_convention
+        self.roll_convention = roll_convention
+        self.pay_delay = pay_delay
+
+        # Adjust dates according to conventions
+        self.adjusted_effective_date = adjust_date(self.effective_date, self.business_day_convention)
+        self.adjusted_maturity_date = adjust_date(self.maturity_date, self.business_day_convention)
+
+        # Calculate day count fraction
+        self.day_count_fraction = self.calculate_day_count_fraction(
+            self.adjusted_effective_date, self.adjusted_maturity_date
+        )
+
+        # Calculate payment date
+        self.payment_date = SIFMA.next_biz_day(self.adjusted_maturity_date, 2)
+
+    def calculate_day_count_fraction(self, start_date, end_date):
+        delta = end_date - start_date
+        if self.day_count == 'ACT/360':
+            day_count_fraction = delta.days / 360
+        else:
+            raise ValueError("Unsupported day count convention")
+        return day_count_fraction
+
+    def get_fra_details(self):
+        """
+        Return a dictionary containing FRA details.
+        """
+        return {
+            'Effective Date': self.adjusted_effective_date,
+            'Maturity Date': self.adjusted_maturity_date,
+            'Payment Date': self.payment_date,
+            'Notional': self.notional,
+            'Fixed Rate': self.fixed_rate,
+            'Day Count Fraction': self.day_count_fraction
+        }
+
+
 if __name__ == '__main__':
-    scheduler = SOFRSwap(
+    swap = SOFRSwap(
         start_date='2024-01-31',  # Trade date
         tenor='5Y',
         day_count='ACT/360',  # Both legs use ACT/360
@@ -204,8 +243,8 @@ if __name__ == '__main__':
         roll_convention='End of Month',
     )
 
-    fixed_schedule = scheduler.get_fixed_leg_schedule()
-    float_schedule = scheduler.get_float_leg_schedule()
+    fixed_schedule = swap.get_fixed_leg_schedule()
+    float_schedule = swap.get_float_leg_schedule()
 
     print("Fixed Leg Schedule:")
     print(f"{'Period':<6} {'Accrual Start':<15} {'Accrual End':<15} {'Payment Date':<15} {'DCF':<10}")
