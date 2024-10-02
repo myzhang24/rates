@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares
 from datetime import timedelta
-from holiday import SIFMA
+from holiday import SIFMA, NYFED
 from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures, get_sofr_1m_futures, get_sofr_3m_futures
 from fomc import generate_fomc_meeting_dates
@@ -80,11 +80,28 @@ class USDSOFRCurve:
                 raise Exception(f"Missing quote for {key}")
             self.sofr_swaps[key] = sofr_swaps[key]
 
-    def build_future_curve(self):
+    def future_objective_function(self):
         """
         Build the constant meeting daily forward futures curve
         :return:
         """
+        knot_dates = np.array(self.future_knot_dates)
+        knot_values = 0.03 * np.ones((1, len(self.future_knot_dates)))
+
+        res = 0.0
+
+        for fut in self.sofr_1m_futures:
+            reference_dates = pd.date_range(fut.reference_start_date, fut.reference_end_date)
+            price = 1e2 * (1 - price_1m_future(reference_dates, knot_dates, knot_values))
+            res += 0.5 * (fut.price - price) ** 2
+
+        for fut in self.sofr_3m_futures:
+            reference_dates = NYFED.biz_date_range(fut.reference_start_date, fut.reference_end_date)
+            price = 1e2 * (1 - price_3m_future(reference_dates, knot_dates, knot_values))
+            res += (fut.price - price) ** 2
+
+        res += 1e2 * np.sum(np.diff(knot_values) ** 2)
+        return res
 
     def build_curve(self):
         """
