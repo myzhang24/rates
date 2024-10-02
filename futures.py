@@ -1,7 +1,7 @@
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from datetime import datetime
-from holiday import SIFMA, NYFED
+from holiday import SIFMA
 
 
 class SOFRFuturesBase:
@@ -69,6 +69,13 @@ class SOFR1MFutures(SOFRFuturesBase):
 
     def __init__(self, ticker):
         super().__init__(ticker)
+        self.reference_end_date = None
+        self.reference_start_date = None
+        self.expiry_date = None
+        self.month = None
+        self.year = None
+        self.year_code = None
+        self.month_code = None
         self.ticker = ticker
         self.parse_ticker()
         self.set_contract_details()
@@ -84,7 +91,7 @@ class SOFR1MFutures(SOFRFuturesBase):
             raise ValueError("Invalid month code in ticker.")
         # Handle one or two-digit year codes (e.g., '5' for 2005 or '25' for 2025)
         if len(self.year_code) == 1:
-            self.year = 2000 + int(self.year_code)
+            self.year = 2020 + int(self.year_code)
         elif len(self.year_code) == 2:
             self.year = 2000 + int(self.year_code)
         else:
@@ -96,7 +103,6 @@ class SOFR1MFutures(SOFRFuturesBase):
         self.expiry_date = self.get_expiry_date()
         # Set the reference period start and end dates
         self.reference_start_date, self.reference_end_date = self.get_reference_period()
-        self.sofr_dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
 
     def get_expiry_date(self):
         # SOFR 1M Futures expire on the last business day of the contract month
@@ -154,6 +160,13 @@ class SOFR3MFutures(SOFRFuturesBase):
 
     def __init__(self, ticker):
         super().__init__(ticker)
+        self.reference_end_date = None
+        self.reference_start_date = None
+        self.expiry_date = None
+        self.month = None
+        self.year = None
+        self.year_code = None
+        self.month_code = None
         self.ticker = ticker
         self.parse_ticker()
         self.set_contract_details()
@@ -169,7 +182,7 @@ class SOFR3MFutures(SOFRFuturesBase):
             raise ValueError("Invalid month code in ticker.")
         # Handle one or two-digit year codes
         if len(self.year_code) == 1:
-            self.year = 2000 + int(self.year_code)
+            self.year = 2020 + int(self.year_code)
         elif len(self.year_code) == 2:
             self.year = 2000 + int(self.year_code)
         else:
@@ -181,7 +194,6 @@ class SOFR3MFutures(SOFRFuturesBase):
         self.expiry_date = self.get_expiry_date()
         # Set the reference period start and end dates
         self.reference_start_date, self.reference_end_date = self.get_reference_period()
-        self.sofr_dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
 
     def get_expiry_date(self):
         # SOFR 3M Futures expire on the third Wednesday of the contract month
@@ -270,7 +282,7 @@ def get_sofr_1m_futures(reference_date):
 
     for i in range(13):
         ticker_month = months[month_index % 12]
-        ticker_year = str(year % 10)  # Use the last digit of the year for the ticker
+        ticker_year = str(year % 100)  # Use the last digit of the year for the ticker
 
         ticker = f'SER{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 1M futures
         tickers.append(ticker)
@@ -300,7 +312,7 @@ def get_sofr_3m_futures(reference_date):
 
     for i in range(16):
         ticker_month = months[month_index % 4]
-        ticker_year = str(year % 10)  # Use the last digit of the year for the ticker
+        ticker_year = str(year % 100)  # Use the last digit of the year for the ticker
 
         ticker = f'SFR{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 3M futures
         tickers.append(ticker)

@@ -60,7 +60,7 @@ class SOFRSwap:
             coupon=0.05
     ):
         self.start_date = pd.Timestamp(start_date)
-        self.tenor = tenor
+        self.tenor = tenor  # Stored for convenience
         self.notional = notional
         self.frequency_fixed = frequency_fixed
         self.frequency_float = frequency_float
@@ -69,12 +69,9 @@ class SOFRSwap:
         self.roll_convention = roll_convention
         self.end_date = self.calculate_end_date()
         self.pay_delay = pay_delay
-
         self.fixed_leg_schedule = self.generate_leg_schedule(self.frequency_fixed)
         self.float_leg_schedule = self.generate_leg_schedule(self.frequency_float)
-
         self.coupon = coupon
-        self.npv = 0.00
 
     def calculate_end_date(self):
         num = int(self.tenor[:-1])
@@ -179,7 +176,7 @@ class SOFRSwap:
         }
 
 
-class SOFRFra:
+class SOFRFRA:
     def __init__(
         self,
         effective_date,  # Accrual start date

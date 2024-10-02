@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import least_squares
 from datetime import timedelta
 from holiday import SIFMA
-from swaps import SOFRSwap, SOFRFra, fra_start_end_date
+from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures, get_sofr_1m_futures, get_sofr_3m_futures
 from fomc import generate_fomc_meeting_dates
 
@@ -25,8 +25,8 @@ class USDSOFRCurve:
         self.initialize()
 
     def initialize(self):
-        self.sofr_1m_futures = {SOFR1MFutures(x) for x in get_sofr_1m_futures(self.reference_date)}
-        self.sofr_3m_futures = {SOFR3MFutures(x) for x in get_sofr_3m_futures(self.reference_date)}
+        self.sofr_1m_futures = [SOFR1MFutures(x) for x in get_sofr_1m_futures(self.reference_date)]
+        self.sofr_3m_futures = [SOFR3MFutures(x) for x in get_sofr_3m_futures(self.reference_date)]
 
         swap_tenors = ["1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y", "12Y", "15Y", "20Y", "25Y", "30Y", "40Y"]
         spot_date = SIFMA.next_biz_day(self.reference_date, 2)
@@ -34,7 +34,7 @@ class USDSOFRCurve:
 
         fra_tenors = ["3x6", "6x9", "9x12", "12x15", "15x18", "18x21", "21x24"]
         fra_start_end_dates = [fra_start_end_date(self.reference_date, x) for x in fra_tenors]
-        self.sofr_fras = [SOFRFra(x, y) for x, y in fra_start_end_dates]
+        self.sofr_fras = [SOFRFRA(x, y) for x, y in fra_start_end_dates]
 
         # Initialize future knots
         meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),
@@ -80,17 +80,11 @@ class USDSOFRCurve:
                 raise Exception(f"Missing quote for {key}")
             self.sofr_swaps[key] = sofr_swaps[key]
 
-    def convexity_adjustment(self, start_date):
+    def build_future_curve(self):
         """
-        Calculate the convexity adjustment using a quadratic model.
-
-        Parameters:
-        - start_date: datetime
-
-        Returns:
-        - adjustment: float
+        Build the constant meeting daily forward futures curve
+        :return:
         """
-        pass
 
     def build_curve(self):
         """
