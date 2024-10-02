@@ -4,53 +4,50 @@ Roll convention of End of Month and IMM are supported.
 """
 
 import pandas as pd
+from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
 from holiday import SIFMA
+
+
+def swap_spot_date(ref_date):
+    date = pd.Timestamp(ref_date)
+    days_added = 0
+    while days_added < 2:
+        date += pd.Timedelta(days=1)
+        if SIFMA.is_biz_day(date):
+            days_added += 1
+    return date
 
 
 class SOFRSwap:
     def __init__(
             self,
-            ref_date,
-            start_date=None,
+            start_date,
             tenor='5Y',
             frequency_fixed='12M',  # Annual payments
             frequency_float='12M',  # Annual payments
-            day_count_fixed='ACT/360',  # Updated to ACT/360
-            day_count_float='ACT/360',
+            day_count='ACT/360',
             business_day_convention='Modified Following',
-            roll_convention='End of Month',
-            holiday_calendar=SIFMA.holiday_set,
+            roll_convention='None',  # 'None', 'EOM'
+            pay_delay=2,
+            coupon=0.05
     ):
-        self.ref_date = pd.Timestamp(ref_date)
-        self.holiday_calendar = holiday_calendar
 
-        if start_date is None:
-            self.start_date = self.calculate_spot_date()
-        else:
-            self.start_date = pd.Timestamp(start_date)
-
+        self.start_date = pd.Timestamp(start_date)
         self.tenor = tenor
         self.frequency_fixed = frequency_fixed
         self.frequency_float = frequency_float
-        self.day_count_fixed = day_count_fixed
-        self.day_count_float = day_count_float
+        self.day_count = day_count
         self.business_day_convention = business_day_convention
         self.roll_convention = roll_convention
-
         self.end_date = self.calculate_end_date()
+        self.pay_delay = pay_delay
 
-        self.fixed_leg_schedule = self.generate_leg_schedule(self.frequency_fixed, self.day_count_fixed)
-        self.float_leg_schedule = self.generate_leg_schedule(self.frequency_float, self.day_count_float)
+        self.fixed_leg_schedule = self.generate_leg_schedule(self.frequency_fixed)
+        self.float_leg_schedule = self.generate_leg_schedule(self.frequency_float)
 
-    def calculate_spot_date(self):
-        date = self.ref_date
-        days_added = 0
-        while days_added < 2:
-            date += pd.Timedelta(days=1)
-            if self.is_business_day(date):
-                days_added += 1
-        return date
+        self.coupon = coupon
+        self.npv = 0.00
 
     def calculate_end_date(self):
         num = int(self.tenor[:-1])
@@ -61,114 +58,90 @@ class SOFRSwap:
             end_date = self.start_date + relativedelta(months=num)
         else:
             raise ValueError("Unsupported tenor unit. Use 'Y' for years or 'M' for months.")
+
+        # Roll day Adjust
+        if isinstance(self.roll_convention, int):
+            try:
+                end_date.replace(day=self.roll_convention)
+            except:
+                pass
+
+        # EOM roll convention
+        if self.roll_convention == "EOM":
+            end_date += MonthEnd(0)
         return end_date
 
-    def get_third_wednesday(self, year, month):
-        first_day = pd.Timestamp(year=year, month=month, day=1)
-        # Find the first Wednesday of the month
-        first_wednesday = first_day + pd.DateOffset(days=(2 - first_day.weekday()) % 7)
-        # Get the third Wednesday
-        third_wednesday = first_wednesday + pd.DateOffset(weeks=2)
-        return third_wednesday
-
-    def generate_imm_dates(self, start_date, end_date):
-        imm_dates = []
-        current_date = start_date
-        while current_date <= end_date:
-            year = current_date.year
-            for month in [3, 6, 9, 12]:
-                imm_date = self.get_third_wednesday(year, month)
-                if start_date <= imm_date <= end_date:
-                    imm_dates.append(imm_date)
-            current_date += relativedelta(years=1)
-        imm_dates.sort()
-        return imm_dates
-
-    def get_next_imm_date(self, date):
-        date = pd.Timestamp(date)
-        year = date.year
-        # IMM months are March, June, September, December
-        months = [3, 6, 9, 12]
-
-        # Generate IMM dates for the current and next year
-        for y in [year, year + 1]:
-            for m in months:
-                imm_date = self.get_third_wednesday(y, m)
-                if imm_date >= date:
-                    return imm_date
-        raise ValueError("Unable to find the next IMM date.")
-
-    def generate_leg_schedule(self, frequency, day_count_convention, payment_delay=2):
+    def generate_leg_schedule(self, frequency):
         schedule = []
 
         freq_num = int(frequency[:-1])
         freq_unit = frequency[-1].upper()
 
-        if freq_unit == 'M':
-            freq_in_months = freq_num
-        elif freq_unit == 'Y':
-            freq_in_months = freq_num * 12
-        else:
-            raise ValueError("Unsupported frequency unit. Use 'M' for months or 'Y' for years.")
+        # Generate unadjusted roll dates
+        unadj_date_list = self.generate_unadjusted_dates(self.start_date, self.end_date, freq_num, freq_unit)
 
-        if self.roll_convention == 'IMM':
-            if freq_in_months % 3 != 0:
-                raise ValueError("For IMM roll convention, frequency must be a multiple of 3 months.")
-
-            # Generate all IMM dates between start_date and end_date
-            imm_dates = self.generate_imm_dates(self.start_date, self.end_date)
-            interval = freq_in_months // 3
-            date_list = imm_dates[::interval]
-            # Ensure the last date is the end date adjusted to IMM
-            if date_list[-1] < self.end_date:
-                date_list.append(self.get_next_imm_date(self.end_date))
-        else:
-            date_list = []
-            current_date = self.start_date
-            while current_date < self.end_date:
-                next_date = current_date
-                if freq_unit == 'M':
-                    next_date += relativedelta(months=freq_num)
-                elif freq_unit == 'Y':
-                    next_date += relativedelta(years=freq_num)
-                else:
-                    raise ValueError("Unsupported frequency unit. Use 'M' for months or 'Y' for years.")
-
-                if self.roll_convention == 'End of Month' and self.is_end_of_month(current_date):
-                    next_date = next_date + relativedelta(day=31)
-
-                date_list.append(next_date)
-                current_date = next_date
+        # Adjust the roll dates using Modified Following convention by default
+        adj_date_list = [self.adjust_date(d) for d in unadj_date_list]
 
         # Build the schedule
-        for i, next_date in enumerate(date_list):
-            adj_current_date = self.adjust_date(self.start_date if i == 0 else date_list[i - 1])
-            adj_next_date = self.adjust_date(next_date)
+        for i in range(len(adj_date_list) - 1):
+            accrual_start_date = adj_date_list[i]
+            accrual_end_date = adj_date_list[i + 1]
 
-            payment_date = adj_next_date
-            days_added = 0
-            payment_date += pd.Timedelta(days=1)
-            while days_added < payment_delay:
-                if self.is_business_day(payment_date):
-                    days_added += 1
-                payment_date += pd.Timedelta(days=1)
-            payment_date -= pd.Timedelta(days=1)
-            payment_date = self.adjust_date(payment_date)
+            # Calculate payment date with payment delay in SIFMA calendar
+            payment_date = self.calculate_payment_date(accrual_end_date)
 
-            dcf = self.calculate_day_count_fraction(adj_current_date, adj_next_date, day_count_convention)
+            # Calculate day count fraction
+            dcf = self.calculate_day_count_fraction(accrual_start_date, accrual_end_date)
 
             schedule.append({
-                'Accrual Start Date': adj_current_date,
-                'Accrual End Date': adj_next_date,
+                'Accrual Start Date': accrual_start_date,
+                'Accrual End Date': accrual_end_date,
                 'Payment Date': payment_date,
                 'Day Count Fraction': dcf
             })
 
         return schedule
 
-    def is_end_of_month(self, date):
-        next_month = date + relativedelta(months=1)
-        return date.day == (next_month.replace(day=1) - pd.Timedelta(days=1)).day
+    def generate_unadjusted_dates(self, start_date, end_date, freq_num, freq_unit):
+        # Generate dates from end date backward
+        date_list = [end_date]
+        current_date = end_date
+
+        while True:
+            if freq_unit == 'M':
+                prev_date = current_date - relativedelta(months=freq_num)
+            elif freq_unit == 'Y':
+                prev_date = current_date - relativedelta(years=freq_num)
+            else:
+                raise ValueError("Unsupported frequency unit. Use 'M' for months or 'Y' for years.")
+
+            # Apply EOM roll convention
+            if self.roll_convention == 'EOM':
+                prev_date = prev_date + MonthEnd(0)
+
+            if prev_date <= start_date:
+                if prev_date < start_date:
+                    date_list.insert(0, start_date)
+                else:
+                    date_list.insert(0, prev_date)
+                break
+            else:
+                date_list.insert(0, prev_date)
+                current_date = prev_date
+        return date_list
+
+    def calculate_payment_date(self, base_date):
+        payment_date = base_date
+        days_added = 0
+
+        while days_added < self.pay_delay:
+            payment_date += pd.Timedelta(days=1)
+            if SIFMA.is_biz_day(payment_date):
+                days_added += 1
+
+        payment_date = self.adjust_date(payment_date)
+        return payment_date
 
     def adjust_date(self, date):
         if self.business_day_convention == 'Following':
@@ -184,36 +157,26 @@ class SOFRSwap:
         return adjusted_date
 
     def following(self, date):
-        while not self.is_business_day(date):
-            date += pd.Timedelta(days=1)
-        return date
+        return SIFMA.next_biz_day(date, 0)
 
     def modified_following(self, date):
-        original_month = date.month
-        date = self.following(date)
-        if date.month != original_month:
-            date = self.preceding(date)
-        return date
+        candidate = SIFMA.next_biz_day(date, 0)
+        if candidate.month != date.month:
+            return SIFMA.prev_biz_day(date, 0)
+        return candidate
 
     def preceding(self, date):
-        while not self.is_business_day(date):
-            date -= pd.Timedelta(days=1)
-        return date
+        return SIFMA.prev_biz_day(date, 0)
 
     def modified_preceding(self, date):
-        original_month = date.month
-        date = self.preceding(date)
-        if date.month != original_month:
-            date = self.following(date)
-        return date
+        candidate = SIFMA.prev_biz_day(date, 0)
+        if candidate.month != date.month:
+            return SIFMA.next_biz_day(date, 0)
+        return candidate
 
-    def is_business_day(self, date):
-        date = pd.Timestamp(date)
-        return date.weekday() < 5 and date not in self.holiday_calendar
-
-    def calculate_day_count_fraction(self, start_date, end_date, convention='ACT/360'):
+    def calculate_day_count_fraction(self, start_date, end_date):
         delta = end_date - start_date
-        if convention == 'ACT/360':
+        if self.day_count == 'ACT/360':
             day_count_fraction = delta.days / 360
         else:
             raise ValueError("Unsupported day count convention")
@@ -234,10 +197,9 @@ class SOFRSwap:
 
 if __name__ == '__main__':
     scheduler = SOFRSwap(
-        ref_date='2024-01-12',  # Trade date
+        start_date='2024-01-31',  # Trade date
         tenor='5Y',
-        day_count_fixed='ACT/360',  # Both legs use ACT/360
-        day_count_float='ACT/360',
+        day_count='ACT/360',  # Both legs use ACT/360
         business_day_convention='Modified Following',
         roll_convention='End of Month',
     )

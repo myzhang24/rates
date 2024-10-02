@@ -1,15 +1,23 @@
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from datetime import datetime
-from holiday import SIFMA
+from holiday import SIFMA, NYFED
 
 
 class SOFRFuturesBase:
     def __init__(self, ticker):
         self.ticker = ticker.upper()
-        self.holiday_calendar = SIFMA.holiday_set  # Use the combined NYT holiday calendar
+        self.price = 100.0
+        self.holiday_calendar = SIFMA.holiday_set  # SIFMA holidays
         self.parse_ticker()
         self.set_contract_details()
+
+    def load_price(self, price):
+        if 2 < price < 150:
+            self.price = price
+        if 0 < price < 1.5:
+            self.price = price * 100
+        self.price = 100.0
 
     def parse_ticker(self):
         # This method will be overridden in child classes
@@ -88,6 +96,7 @@ class SOFR1MFutures(SOFRFuturesBase):
         self.expiry_date = self.get_expiry_date()
         # Set the reference period start and end dates
         self.reference_start_date, self.reference_end_date = self.get_reference_period()
+        self.sofr_dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
 
     def get_expiry_date(self):
         # SOFR 1M Futures expire on the last business day of the contract month
@@ -172,6 +181,7 @@ class SOFR3MFutures(SOFRFuturesBase):
         self.expiry_date = self.get_expiry_date()
         # Set the reference period start and end dates
         self.reference_start_date, self.reference_end_date = self.get_reference_period()
+        self.sofr_dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
 
     def get_expiry_date(self):
         # SOFR 3M Futures expire on the third Wednesday of the contract month
@@ -328,7 +338,7 @@ if __name__ == '__main__':
     reference_date = datetime(2023, 3, 15)
     tickers_3m = get_sofr_3m_futures(reference_date)
     tickers_1m = get_sofr_1m_futures(reference_date)
-    print(f"The 13 SOFR 1M futures as of {reference_date.date()} are")
+    print(f"\nThe 13 SOFR 1M futures as of {reference_date.date()} are")
     print(tickers_1m)
     print(f"The 16 SOFR 3M futures as of {reference_date.date()} are")
     print(tickers_3m)

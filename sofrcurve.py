@@ -11,17 +11,23 @@ from fomc import generate_fomc_meeting_dates
 class USDSOFRCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date)
+
         self.sofr_1m_futures = None
         self.sofr_3m_futures = None
+        self.future_knot_dates = None
+        self.future_knot_values = None
+
         self.sofr_fras = None
         self.sofr_swaps = None
-        self.knot_dates = None
-        self.knot_values = None
+        self.swap_knot_dates = None
+        self.swap_knot_values = None
+
         self.initialize()
 
     def initialize(self):
-        self.sofr_1m_futures = {x: 100.0 for x in get_sofr_1m_futures(self.reference_date)}
-        self.sofr_3m_futures = {x: 100.0 for x in get_sofr_3m_futures(self.reference_date)}
+        self.sofr_1m_futures = {SOFR1MFutures(x) for x in get_sofr_1m_futures(self.reference_date)}
+        self.sofr_3m_futures = {SOFR3MFutures(x) for x in get_sofr_3m_futures(self.reference_date)}
+
         self.sofr_fras = {"3x6": 0.00,
                           "6x9": 0.00,
                           "9x12": 0.00,
@@ -43,15 +49,20 @@ class USDSOFRCurve:
                            "25Y": 0.00,
                            "30Y": 0.00,
                            "40Y": 0.00}
+
+        # Initialize future knots
         meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),
-                                                      (self.reference_date + pd.DateOffset(years=2)).date())
+                                                    (self.reference_date + pd.DateOffset(years=2)).date())
         effective_dates = [SIFMA.next_biz_day(x, 1) for x in meeting_dates]
-        swap_dates = [SIFMA.next_biz_day((self.reference_date + pd.DateOffset(years=x)).date(), 0)
-                            for x in [3, 4, 5, 7, 10, 12, 15, 20, 25, 30, 40]]
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
-        self.knot_dates = [next_biz_day] + effective_dates + swap_dates if next_biz_day not in effective_dates else\
-            effective_dates + swap_dates
-        self.knot_values = 0.03 * np.ones((len(self.knot_dates), 1))
+        self.future_knot_dates = [next_biz_day] + effective_dates if next_biz_day not in effective_dates else \
+            effective_dates
+        self.future_knot_values = 0.03 * np.ones((1, len(self.future_knot_dates)))
+
+        swap_dates = [SIFMA.next_biz_day((self.reference_date + pd.DateOffset(years=x)).date(), 0)
+                      for x in [3, 4, 5, 7, 10, 12, 15, 20, 25, 30, 40]]
+        self.swap_knot_dates = [next_biz_day] + swap_dates
+        self.swap_knot_values = 0.03 * np.ones((1, len(self.swap_knot_dates)))
 
     def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_swaps):
         """
@@ -63,7 +74,25 @@ class USDSOFRCurve:
         - sofr_fras: list of tuples (start_date, end_date, rate)
         - sofr_ois_swaps: list of tuples (tenor, rate)
         """
-        pass
+        for key in self.sofr_1m_futures.keys():
+            if key not in sofr_1m_futures:
+                raise Exception(f"Missing quote for {key}")
+            self.sofr_1m_futures[key] = sofr_1m_futures[key]
+
+        for key in self.sofr_3m_futures.keys():
+            if key not in sofr_3m_futures:
+                raise Exception(f"Missing quote for {key}")
+            self.sofr_3m_futures[key] = sofr_3m_futures[key]
+
+        for key in self.sofr_fras.keys():
+            if key not in sofr_fras:
+                raise Exception(f"Missing quote for {key}")
+            self.sofr_fras[key] = sofr_fras[key]
+
+        for key in self.sofr_swaps.keys():
+            if key not in sofr_swaps:
+                raise Exception(f"Missing quote for {key}")
+            self.sofr_swaps[key] = sofr_swaps[key]
 
     def convexity_adjustment(self, start_date):
         """
@@ -82,7 +111,7 @@ class USDSOFRCurve:
         Build the USD SOFR curve by calibrating to market instruments.
         """
         # Initial guess for the optimization
-        initial_rates = [0.02] * len(self.knot_values)
+        initial_rates = [0.02] * len(self.swap_knot_values)
         # Bounds for the rates
         bounds = (0.0, 0.20)
 
@@ -90,7 +119,7 @@ class USDSOFRCurve:
         result = least_squares(self.objective_function, initial_rates, bounds=bounds)
 
         # Extract the calibrated zero rates
-        self.knot_values = result.x
+        self.swap_knot_values = result.x
 
         # Build discount factors and forward rates
         self.construct_discount_curve()
@@ -171,7 +200,7 @@ class USDSOFRCurve:
         """
         Ensure forward rates are constant between FOMC rate effective dates for the next 2 years.
         """
-        fomc_effective_dates = [date + timedelta(days=1) for date in self.fomc_dates[:6]]
+        fomc_effective_dates = [date + timedelta(days=1) for date in self.future_knot_dates[:6]]
         for i in range(len(fomc_effective_dates) - 1):
             start_date = fomc_effective_dates[i]
             end_date = fomc_effective_dates[i + 1]
