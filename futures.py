@@ -160,6 +160,7 @@ class SOFR3MFutures(SOFRFuturesBase):
 
     def __init__(self, ticker):
         super().__init__(ticker)
+        self.reference_dates = None
         self.reference_end_date = None
         self.reference_start_date = None
         self.expiry_date = None
