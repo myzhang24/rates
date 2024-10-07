@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import least_squares
 from holiday import SIFMA, NYFED
 from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
-from futures import SOFR1MFutures, SOFR3MFutures, get_sofr_1m_futures, get_sofr_3m_futures
+from futures import SOFR1MFutures, SOFR3MFutures
 from fomc import generate_fomc_meeting_dates
 from fixings import load_fixings
 
@@ -53,82 +53,76 @@ class USDSOFRCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date)
 
-        self.sofr_1m_futures = None
-        self.sofr_3m_futures = None
+        self.market_instruments = []
+        self.sofr_1m_futures = []
+        self.sofr_3m_futures = []
+        self.sofr_fras = []
+        self.sofr_swaps = []
+
         self.future_knot_dates = None
         self.future_knot_values = None
+        self.initialize_future_knot_dates()
 
-        self.sofr_fras = None
-        self.sofr_swaps = None
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
-        self.fixings = None
-        self.initialize()
+        self.fixings = load_fixings(self.reference_date - pd.DateOffset(months=4), self.reference_date)
 
-    def initialize(self):
-        self.sofr_1m_futures = [SOFR1MFutures(x) for x in get_sofr_1m_futures(self.reference_date)]
-        self.sofr_3m_futures = [SOFR3MFutures(x) for x in get_sofr_3m_futures(self.reference_date)]
-
-        swap_tenors = ["1Y", "2Y", "3Y", "4Y", "5Y", "7Y", "10Y", "12Y", "15Y", "20Y", "25Y", "30Y", "40Y"]
-        spot_date = SIFMA.next_biz_day(self.reference_date, 2)
-        self.sofr_swaps = [SOFRSwap(start_date=spot_date, tenor=x) for x in swap_tenors]
-
-        fra_tenors = ["3x6", "6x9", "9x12", "12x15", "15x18", "18x21", "21x24"]
-        fra_start_end_dates = [fra_start_end_date(self.reference_date, x) for x in fra_tenors]
-        self.sofr_fras = [SOFRFRA(x, y) for x, y in fra_start_end_dates]
-
+    def initialize_future_knot_dates(self):
         # Initialize future knots
         meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),
                                                     (self.reference_date + pd.DateOffset(years=2)).date())
         effective_dates = [SIFMA.next_biz_day(x, 1) for x in meeting_dates]
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
-        self.future_knot_dates = np.array([next_biz_day] + effective_dates if next_biz_day not in effective_dates else \
-                                              effective_dates)
+        self.future_knot_dates = np.array(effective_dates)
+        if next_biz_day not in effective_dates:
+            self.future_knot_dates = np.array([next_biz_day] + effective_dates)
         self.future_knot_values = 0.03 * np.ones((1, len(self.future_knot_dates)))
 
-        swap_dates = [SIFMA.next_biz_day((self.reference_date + pd.DateOffset(years=x)).date(), 0)
-                      for x in [3, 4, 5, 7, 10, 12, 15, 20, 25, 30, 40]]
+    def initialize_swap_knot_dates(self):
+        # Initialize knots for swaps
+        next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
+        swap_dates = [x.fixed_leg_schedule[-1]["Payment Date"] for x in self.sofr_swaps]
         self.swap_knot_dates = np.array([next_biz_day] + swap_dates)
         self.swap_knot_values = 0.03 * np.ones((1, len(self.swap_knot_dates)))
 
-        # Get earlier reference date
-        rate_reference_dates = [x.reference_start_date for x in self.sofr_3m_futures]
-        rate_reference_dates += [x.reference_start_date for x in self.sofr_1m_futures]
-        earliest_reference_date = np.min(np.array(rate_reference_dates))
-
-        # Load fixings
-        self.fixings = load_fixings(earliest_reference_date, self.future_knot_dates[0])
-
-    def load_market_data(self, sofr_1m_futures, sofr_3m_futures, sofr_fras, sofr_swaps):
+    def load_market_data(self, sofr_3m_futures, sofr_1m_futures=None, sofr_swaps=None, sofr_fras=None):
         """
         Load market data for calibration.
 
         Parameters:
-        - sofr_1m_futures: list of tuples (ticker, price)
-        - sofr_3m_futures: list of tuples (ticker, price)
-        - sofr_fras: list of tuples (start_date, end_date, rate)
-        - sofr_ois_swaps: list of tuples (tenor, rate)
+        - sofr_1m_futures: 2d array of [ticker, price]
+        - sofr_3m_futures: 2d array of [ticker, price]
+        - sofr_fras: 2d array of [shorthand, rate]
+        - sofr_ois_swaps: 2d array of [shorthand, rate]
         """
-        for key in self.sofr_1m_futures.keys():
-            if key not in sofr_1m_futures:
-                raise Exception(f"Missing quote for {key}")
-            self.sofr_1m_futures[key] = sofr_1m_futures[key]
 
-        for key in self.sofr_3m_futures.keys():
-            if key not in sofr_3m_futures:
-                raise Exception(f"Missing quote for {key}")
-            self.sofr_3m_futures[key] = sofr_3m_futures[key]
+        self.market_instruments = {
+            "SOFR3M": sofr_3m_futures,
+            "SOFR1M": sofr_1m_futures,
+            "SOFRFRAs": sofr_fras,
+            "SOFRSwaps": sofr_swaps
+        }
 
-        for key in self.sofr_fras.keys():
-            if key not in sofr_fras:
-                raise Exception(f"Missing quote for {key}")
-            self.sofr_fras[key] = sofr_fras[key]
+        # Load market price into 1m futures instances
+        for key, price in sofr_3m_futures.items():
+            self.sofr_3m_futures.append(SOFR3MFutures(key.upper()))
 
-        for key in self.sofr_swaps.keys():
-            if key not in sofr_swaps:
-                raise Exception(f"Missing quote for {key}")
-            self.sofr_swaps[key] = sofr_swaps[key]
+        if sofr_1m_prices is not None:
+            for key, price in sofr_1m_futures.items():
+                self.sofr_1m_futures.append(SOFR1MFutures(key.upper()))
+
+        if sofr_fras is not None:
+            for key, rate in sofr_fras.items():
+                start_date, end_date = fra_start_end_date(self.reference_date, key.upper())
+                self.sofr_fras.append(SOFRFRA(start_date, end_date))
+
+        if sofr_swaps is not None:
+            for key, rate in sofr_swaps.items():
+                start_date = SIFMA.next_biz_day(self.reference_date, 2)
+                self.sofr_swaps.append(SOFRSwap(start_date, key.upper()))
+
+        self.initialize_swap_knot_dates()
 
     def futures_objective_function(self, knot_values):
         """
@@ -316,5 +310,40 @@ class USDSOFRCurve:
 
 # Example usage
 if __name__ == '__main__':
-    sofr = USDSOFRCurve("2024-10-01")
+    curve = USDSOFRCurve("2024-10-01")
+    sofr_1m_prices = pd.Series({
+        "SERV24": 95.1525,
+        "SERX24": 95.315,
+        "SERZ24": 95.44,
+        "SERF25": 95.61,
+        "SERG25": 95.81,
+        "SERH25": 95.89,
+        "SERJ25": 96.02,
+        "SERK25": 96.13,
+        "SERM25": 96.21,
+        "SERN25": 96.305,
+        "SERQ25": 96.39,
+        "SERU25": 96.415,
+    }, name="SOFR1M")
+    sofr_3m_prices = pd.Series({
+        "SFRU24": 95.21,
+        "SFRZ24": 95.705,
+        "SFRH25": 96.09,
+        "SFRM25": 96.35,
+        "SFRU25": 96.515,
+        "SFRZ25": 96.605,
+        "SFRH26": 96.655,
+        "SFRM26": 96.67,
+        "SFRU26": 96.67
+    }, name="SOFR3M")
+    sofr_swaps_rates = pd.Series({
+        "1Y": 0.0389,
+        "3Y": 0.0338,
+        "5Y": 0.0332,
+        "7Y": 0.0333,
+        "10Y": 0.0338,
+        "15Y": 0.0347,
+        "30Y": 0.0336
+    })
+    curve.load_market_data(sofr_3m_prices, sofr_1m_prices, sofr_swaps_rates)
     exit(0)
