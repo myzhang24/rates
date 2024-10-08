@@ -74,6 +74,8 @@ class USDSOFRCurve:
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
+        self.fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
+
     def initialize_future_knot_dates(self):
         """
         This function initializes the future curve knot dates given by FOMC meeting effective dates
@@ -152,23 +154,29 @@ class USDSOFRCurve:
         return ref_dates_3m
 
 
-
     def build_future_curve(self):
+        # Prepare the local constants
         ref_array_1m = self.future_1m_reference_arrays()
         ref_array_3m = self.future_3m_reference_arrays()
 
         fut_price_1m = jnp.array(self.market_instruments["SOFR1M"].values)
         fut_price_3m = jnp.array(self.market_instruments["SOFR3M"].values)
 
-        fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
-        fixing_dates = convert_to_1904(fixings.index)
-        fixing_values = jnp.array(fixings.values)
+        fixing_dates = convert_to_1904(self.fixings.index)
+        fixing_values = jnp.array(self.fixings.values)
 
         last_fixing = fixing_values[-1]
 
         knot_dates = convert_to_1904(self.future_knot_dates)
         initial_values = 0.05 * jnp.ones_like(knot_dates, dtype=float)
 
+        penalty_1m = jnp.ones_like(fut_price_1m)
+        penalty_3m = jnp.ones_like(fut_price_3m)
+        penalty_1m.at[5:].set(0.5)
+        penalty_3m.at[0].set(0.5)
+        penalty_3m.at[5:].set(0.5)
+
+        # Write the objective function
         def futures_objective_function(knot_values):
             """
             Build the constant meeting daily forward futures curve
@@ -189,10 +197,10 @@ class USDSOFRCurve:
                 price = 1e2 * (1 - sofr_compound(ref_array_3m[i], rates).squeeze())
                 prices_3m = prices_3m.at[i].set(price)
 
-            res = 0.5 * jnp.sum((prices_1m - fut_price_1m) ** 2)
-            res += jnp.sum((prices_3m - fut_price_3m) ** 2)
+            res = jnp.sum(penalty_1m * (prices_1m - fut_price_1m) ** 2)
+            res += jnp.sum(penalty_3m * (prices_3m - fut_price_3m) ** 2)
             res += 0.1 * 1e4 * jnp.sum(jnp.diff(knot_values) ** 2)
-            res += 0.5 * 1e4 * (last_fixing - knot_values[0]) ** 2
+            res += 0.2 * 1e4 * (last_fixing - knot_values[0]) ** 2
             return res
 
         # Use jax lbfgsb to minimize with jit and autodiff
@@ -204,6 +212,41 @@ class USDSOFRCurve:
         self.future_knot_values = res
         return self
 
+    def price_1m_futures(self):
+        fut_price_1m = jnp.array(self.market_instruments["SOFR1M"].values)
+        prices_1m = jnp.zeros_like(fut_price_1m)
+        ref_array_1m = self.future_1m_reference_arrays()
+        fixing_dates = convert_to_1904(self.fixings.index)
+        fixing_values = jnp.array(self.fixings.values)
+        knot_dates = convert_to_1904(self.future_knot_dates)
+        knot_values = jnp.array(self.future_knot_values)
+
+        knot_to_use = jnp.concatenate([fixing_dates, knot_dates])
+        value_to_use = jnp.concatenate([fixing_values, knot_values])
+
+        for i in range(prices_1m.shape[0]):
+            price = 1e2 * (1 - jnp.mean(last_published_value(ref_array_1m[i], knot_to_use, value_to_use)).squeeze())
+            prices_1m = prices_1m.at[i].set(price)
+        return prices_1m
+
+    def price_3m_futures(self):
+        fut_price_3m = jnp.array(self.market_instruments["SOFR3M"].values)
+        prices_3m = jnp.zeros_like(fut_price_3m)
+        ref_array_3m = self.future_3m_reference_arrays()
+        fixing_dates = convert_to_1904(self.fixings.index)
+        fixing_values = jnp.array(self.fixings.values)
+        knot_dates = convert_to_1904(self.future_knot_dates)
+        knot_values = jnp.array(self.future_knot_values)
+
+        knot_to_use = jnp.concatenate([fixing_dates, knot_dates])
+        value_to_use = jnp.concatenate([fixing_values, knot_values])
+
+        for i in range(prices_3m.shape[0]):
+            rates = last_published_value(ref_array_3m[i], knot_to_use, value_to_use)
+            price = 1e2 * (1 - sofr_compound(ref_array_3m[i], rates).squeeze())
+            prices_3m = prices_3m.at[i].set(price)
+        return prices_3m
+
     def plot_future_daily_forwards(self):
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
@@ -213,204 +256,25 @@ class USDSOFRCurve:
 
         # Create a dotted black line plot with step interpolation (left-continuous)
         plt.step(df.index, df.iloc[:, 0], where='post', linestyle=':', color='black')
-
-        # Add black solid dots at the actual dates and values
         plt.scatter(df.index, df.iloc[:, 0], color='black', s=10, zorder=5)
-
-        # Get current axis
         ax = plt.gca()
-
-        # Set the y-axis limits
         ax.set_ylim(3.0, 5.25)
-
-        # Set major ticks at multiples of 0.25
         ax.yaxis.set_major_locator(plt.MultipleLocator(0.25))
-
-        # Ensure the y-axis labels are shown at multiples of 0.25
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda val, pos: '{:.2f}'.format(val)))
-
-        # Format the x-axis to show date as "YY' MMM" (e.g., "24' Oct")
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%y' %b"))
-
-        # Ensure that every month has a tick/label
         ax.xaxis.set_major_locator(mdates.MonthLocator())
-
-        # Set the x-axis labels to be vertical
         plt.xticks(rotation=90, ha='center')
-
-        # Make the gridlines more transparent (increase transparency with alpha)
         ax.grid(which='major', axis='y', linestyle='-', linewidth='0.5', color='gray', alpha=0.3)
-
-        # Optional: Add labels and title
         plt.xlabel('Date')
         plt.ylabel('SOFR Daily Forwards')
         plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
-
-        # Show the plot
         plt.tight_layout()
         plt.show()
 
         return self
 
-    #
-    # def build_curve(self):
-    #     """
-    #     Build the USD SOFR curve by calibrating to market instruments.
-    #     """
-    #     # Initial guess for the optimization
-    #     initial_rates = [0.02] * len(self.swap_knot_values)
-    #     # Bounds for the rates
-    #     bounds = (0.0, 0.20)
-    #
-    #     # Optimize to minimize the difference between market and model prices
-    #     result = least_squares(self.objective_function, initial_rates, bounds=bounds)
-    #
-    #     # Extract the calibrated zero rates
-    #     self.swap_knot_values = result.x
-    #
-    #     # Build discount factors and forward rates
-    #     self.construct_discount_curve()
-    #
-    # def objective_function(self, rates):
-    #     """
-    #     Objective function for optimization.
-    #
-    #     Parameters:
-    #     - rates: list of zero rates
-    #
-    #     Returns:
-    #     - residuals: list of differences between market and model prices
-    #     """
-    #     residuals = []
-    #
-    #     idx = 0
-    #     # 1M SOFR Futures
-    #     for ticker, market_price in self.market_instruments['1M_Futures']:
-    #         start_date, end_date = self.futures_utility.get_future_dates(ticker)
-    #         model_price = self.price_sofr_future(start_date, end_date, rates[idx])
-    #         residuals.append(model_price - market_price)
-    #         idx += 1
-    #
-    #     # 3M SOFR Futures
-    #     for ticker, market_price in self.market_instruments['3M_Futures']:
-    #         start_date, end_date = self.futures_utility.get_future_dates(ticker)
-    #         adjustment = self.convexity_adjustment(start_date)
-    #         model_price = self.price_sofr_future(start_date, end_date, rates[idx], adjustment)
-    #         residuals.append(model_price - market_price)
-    #         idx += 1
-    #
-    #     # SOFR FRAs
-    #     for start_date, end_date, market_rate in self.market_instruments['FRAs']:
-    #         adjustment = self.convexity_adjustment(start_date)
-    #         model_rate = self.forward_rate(start_date, end_date, rates[idx], adjustment)
-    #         residuals.append(model_rate - market_rate)
-    #         idx += 1
-    #
-    #     # SOFR OIS Swaps
-    #     for tenor, market_rate in self.market_instruments['OIS_Swaps']:
-    #         model_rate = self.price_ois_swap(tenor, rates[idx])
-    #         residuals.append(model_rate - market_rate)
-    #         idx += 1
-    #
-    #     return residuals
-    #
-    # def construct_discount_curve(self):
-    #     """
-    #     Construct discount factors and forward rates from calibrated zero rates.
-    #     """
-    #     dates = [self.reference_date]
-    #     discounts = [1.0]
-    #
-    #     for idx, rate in enumerate(self.curve_nodes):
-    #         # Assuming each rate corresponds to a time interval
-    #         time = (idx + 1) / 12  # Assuming monthly intervals
-    #         date = self.reference_date + timedelta(days=365.25 * time)
-    #         df = np.exp(-rate * time)
-    #         discounts.append(df)
-    #         dates.append(date)
-    #
-    #     self.discounts = dict(zip(dates, discounts))
-    #
-    #     # Calculate forward rates between dates
-    #     self.forward_rates = {}
-    #     for i in range(len(dates) - 1):
-    #         dt = (dates[i + 1] - dates[i]).days / 365.25
-    #         df1 = discounts[i]
-    #         df2 = discounts[i + 1]
-    #         fwd_rate = (df1 / df2 - 1) / dt
-    #         self.forward_rates[dates[i]] = fwd_rate
-    #
-    #
-    # def forward_rate(self, start_date, end_date, rate, adjustment=0.0):
-    #     """
-    #     Calculate the forward rate between two dates.
-    #
-    #     Parameters:
-    #     - start_date: datetime
-    #     - end_date: datetime
-    #     - rate: float
-    #     - adjustment: float
-    #
-    #     Returns:
-    #     - forward_rate: float
-    #     """
-    #     dt = (end_date - start_date).days / 365.25
-    #     forward_rate = rate + adjustment
-    #     return forward_rate
-    #
-    # def price_ois_swap(self, tenor, rate):
-    #     """
-    #     Price a SOFR OIS swap.
-    #
-    #     Parameters:
-    #     - tenor: float (in years)
-    #     - rate: float
-    #
-    #     Returns:
-    #     - swap_rate: float
-    #     """
-    #     # Generate payment dates
-    #     payment_dates = self.schedule_generator.generate_schedule(
-    #         self.reference_date, tenor, frequency='Annual', calendar=self.sifma_calendar)
-    #
-    #     # Calculate the fixed leg
-    #     fixed_leg = sum(
-    #         [self.discounts[date] * rate * self.schedule_generator.day_count_fraction(date) for date in payment_dates])
-    #
-    #     # Calculate the floating leg (assumed to be par at initiation)
-    #     floating_leg = 1 - self.discounts[payment_dates[-1]]
-    #
-    #     swap_rate = floating_leg / fixed_leg
-    #     return swap_rate
-    #
-    # def get_discount_factor(self, date):
-    #     """
-    #     Get the discount factor for a given date.
-    #
-    #     Parameters:
-    #     - date: datetime
-    #
-    #     Returns:
-    #     - discount_factor: float
-    #     """
-    #     return self.discounts.get(date, None)
-    #
-    # def get_forward_rate(self, date):
-    #     """
-    #     Get the forward rate for a given date.
-    #
-    #     Parameters:
-    #     - date: datetime
-    #
-    #     Returns:
-    #     - forward_rate: float
-    #     """
-    #     return self.forward_rates.get(date, None)
-
-
 # Example usage
 if __name__ == '__main__':
-    curve = USDSOFRCurve("2024-10-01")
     sofr_1m_prices = pd.Series({
         "SERV24": 95.1525,
         "SERX24": 95.315,
@@ -445,7 +309,10 @@ if __name__ == '__main__':
         "15Y": 0.0347,
         "30Y": 0.0336
     })
+
+    curve = USDSOFRCurve("2024-10-01")
     curve.load_market_data(sofr_3m_prices, sofr_1m_prices, sofr_swaps_rates)
     curve.build_future_curve()
     curve.plot_future_daily_forwards()
+
     exit(0)

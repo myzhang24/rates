@@ -26,7 +26,7 @@ def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
         # 2020
         dt.datetime(2020, 1, 29),
         # dt.date(2020, 3, 3),  # Emergency meeting
-        dt.datetime(2020, 3, 15),  # Emergency meeting
+        dt.datetime(2020, 3, 15),
         dt.datetime(2020, 4, 29),
         dt.datetime(2020, 6, 10),
         dt.datetime(2020, 7, 29),
@@ -137,66 +137,38 @@ def estimate_future_meeting_dates(start_date, end_date):
 
     return estimated_meetings
 
-
 def estimate_meetings_for_year(year):
     """
-    Estimates FOMC meeting dates for a given year using heuristics.
+    Estimate the FOMC meeting dates for a given year.
 
-    Args:
+    Parameters:
         year (int): The year for which to estimate meeting dates.
 
     Returns:
-        meetings (list of datetime.date): List of estimated meeting dates.
+        List[datetime.datetime]: A list of 8 datetime objects representing the estimated meeting dates.
     """
     meetings = []
-
-    # Typical months when FOMC meetings occur
-    meeting_months = [1, 3, 5, 6, 7, 9, 10, 12]
-
-    for month in meeting_months:
-        # Find the second day (Wednesday) of the FOMC meeting
-        meeting_date = get_meeting_second_day(year, month)
-        if meeting_date:
-            meetings.append(meeting_date)
-
+    # Approximate target days for each meeting based on historical patterns
+    meeting_info = [
+        (1, 25),   # Late January
+        (3, 15),   # Mid-March
+        (5, 3),    # Early May
+        (6, 14),   # Mid-June
+        (7, 26),   # Late July
+        (9, 20),   # Mid-September
+        (11, 1),   # Early November
+        (12, 13),  # Mid-December
+    ]
+    for month, day in meeting_info:
+        # Create the target date
+        target_date = dt.datetime(year, month, day)
+        # Calculate days to the next Wednesday (weekday 2)
+        days_ahead = (2 - target_date.weekday()) % 7
+        # Adjust the date to the next Wednesday
+        meeting_date = target_date + dt.timedelta(days=days_ahead)
+        # Combine date with a default time (midnight)
+        meetings.append(meeting_date)
     return meetings
-
-
-def get_meeting_second_day(year, month):
-    """
-    Finds the second day (Wednesday) of the FOMC meeting for a given month and year.
-
-    Args:
-        year (int): The year.
-        month (int): The month.
-
-    Returns:
-        meeting_date (datetime.date): The second day of the meeting.
-    """
-    # Get the first day of the month
-    first_day = dt.datetime(year, month, 1)
-
-    # List of potential meeting days (Wednesdays)
-    wednesdays = []
-    day = first_day
-    while day.month == month:
-        if day.weekday() == 2:  # 0=Monday, 1=Tuesday, 2=Wednesday
-            wednesdays.append(day)
-        day += dt.timedelta(days=1)
-
-    if len(wednesdays) >= 3:
-        # Use the third Wednesday
-        meeting_second_day = wednesdays[2]
-    elif len(wednesdays) >= 2:
-        # Use the second Wednesday
-        meeting_second_day = wednesdays[1]
-    elif wednesdays:
-        # Use the first Wednesday
-        meeting_second_day = wednesdays[0]
-    else:
-        meeting_second_day = None
-
-    return meeting_second_day
 
 
 # Example usage:
