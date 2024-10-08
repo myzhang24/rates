@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.optimize import least_squares
+from scipy.optimize import minimize, Bounds
 from holiday import SIFMA, NYFED
 from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures
@@ -8,7 +8,14 @@ from fomc import generate_fomc_meeting_dates
 from fixings import load_fixings
 
 
-def last_published_value(reference_dates, knot_dates, knot_values):
+def last_published_value(reference_dates, knot_dates, knot_values) -> np.ndarray:
+    """
+    This function looks up reference_values for reference_dates according to knot_dates, knot_values
+    :param reference_dates:
+    :param knot_dates:
+    :param knot_values:
+    :return:
+    """
     indices = np.searchsorted(knot_dates, reference_dates, side='right') - 1
 
     # Initialize D with NaN values
@@ -21,37 +28,62 @@ def last_published_value(reference_dates, knot_dates, knot_values):
 
 
 def price_1m_future(reference_dates, knot_dates, knot_values, fixings=None):
+    """
+    This function prices 1m SOFR futures based on constant meeting-to-meeting daily forwards (in risk neutral measure)
+    :param reference_dates:
+    :param knot_dates:
+    :param knot_values:
+    :param fixings:
+    :return:
+    """
     if reference_dates[0] < knot_dates[0]:
-        fixings_to_use = fixings[reference_dates[0]:knot_dates[0]]
-        knots = np.concatenate(fixings_to_use.index.to_numpy(), knot_dates)
-        values = np.concatenate(fixings_to_use.values, knot_values)
+        fixings_to_use = fixings[NYFED.prev_biz_day(reference_dates[0], 1):knot_dates[0]]
+        knots = np.concatenate([fixings_to_use.index.date, knot_dates])
+        values = np.concatenate([fixings_to_use.values, knot_values])
     else:
         knots = knot_dates
         values = knot_values
     reference_rates = last_published_value(reference_dates, knots, values)
-    return 1e2 * (1 - reference_rates.mean())
+    return np.round(1e2 * (1 - reference_rates.mean()), 4)
 
 
 def price_3m_future(reference_dates, knot_dates, knot_values, fixings=None):
+    """
+    This function prices 3m SOFR futures based on constant meeting-to-meeting daily forwards (in risk neutral measure)
+    :param reference_dates:
+    :param knot_dates:
+    :param knot_values:
+    :param fixings:
+    :return:
+    """
     if reference_dates[0] < knot_dates[0]:
-        fixings_to_use = fixings[reference_dates[0]:knot_dates[0]]
-        knots = np.concatenate(fixings_to_use.index.to_numpy(), knot_dates)
-        values = np.concatenate(fixings_to_use.values, knot_values)
+        fixings_to_use = fixings[NYFED.prev_biz_day(reference_dates[0], 1):knot_dates[0]]
+        knots = np.concatenate([fixings_to_use.index.date, knot_dates])
+        values = np.concatenate([fixings_to_use.values, knot_values])
     else:
         knots = knot_dates
         values = knot_values
     reference_rates = last_published_value(reference_dates, knots, values)
-    return 1e2 * (1 - sofr_compound(reference_dates, reference_rates))
+    return np.round(1e2 * (1 - sofr_compound(reference_dates, reference_rates)), 4)
 
 
 def sofr_compound(reference_dates, reference_rates):
-    annualized_rate = np.prod(1 + reference_rates * reference_dates.diff().days() / 360) - 1
-    return 360 * annualized_rate / (reference_dates[-1] - reference_dates[0]).days
+    """
+    This function computes the compounded SOFR rate given the fixings
+    :param reference_dates:
+    :param reference_rates:
+    :return:
+    """
+    num_days = pd.Series(reference_dates).diff().dt.days.to_numpy()[1:]
+    rates = reference_rates[:-1]
+    annualized_rate = np.prod(1 + rates * num_days / 360) - 1
+    assert int(num_days.sum()) == (reference_dates[-1] - reference_dates[0]).days
+    return 360 * annualized_rate / num_days.sum()
 
 
 class USDSOFRCurve:
     def __init__(self, reference_date):
-        self.reference_date = pd.Timestamp(reference_date)
+        self.reference_date = pd.Timestamp(reference_date).date()
 
         self.market_instruments = []
         self.sofr_1m_futures = []
@@ -59,32 +91,40 @@ class USDSOFRCurve:
         self.sofr_fras = []
         self.sofr_swaps = []
 
+        self.future_curve_tenor = 2
         self.future_knot_dates = None
         self.future_knot_values = None
         self.initialize_future_knot_dates()
 
+        self.swap_knot_policy = "Payment Date"
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
-        self.fixings = load_fixings(self.reference_date - pd.DateOffset(months=4), self.reference_date)
+        self.fixings = 1e-2 * load_fixings(self.reference_date - pd.DateOffset(months=4), self.reference_date)
+        self.future_knot_values[0] = self.fixings.iloc[-1]
 
     def initialize_future_knot_dates(self):
+        """
+        This function initializes the future curve knot dates given by FOMC meeting effective dates
+        :return:
+        """
         # Initialize future knots
-        meeting_dates = generate_fomc_meeting_dates(self.reference_date.date(),
-                                                    (self.reference_date + pd.DateOffset(years=2)).date())
+        far_out_date = self.reference_date + pd.DateOffset(years=self.future_curve_tenor)
+        meeting_dates = generate_fomc_meeting_dates(self.reference_date, far_out_date.date())
         effective_dates = [SIFMA.next_biz_day(x, 1) for x in meeting_dates]
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
-        self.future_knot_dates = np.array(effective_dates)
         if next_biz_day not in effective_dates:
             self.future_knot_dates = np.array([next_biz_day] + effective_dates)
-        self.future_knot_values = 0.03 * np.ones((1, len(self.future_knot_dates)))
+        else:
+            self.future_knot_dates = np.array(effective_dates)
+        self.future_knot_values = 0.03 * np.ones((len(self.future_knot_dates), ))
 
     def initialize_swap_knot_dates(self):
         # Initialize knots for swaps
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
-        swap_dates = [x.fixed_leg_schedule[-1]["Payment Date"] for x in self.sofr_swaps]
+        swap_dates = [x.fixed_leg_schedule.iloc[-1].loc[self.swap_knot_policy] for x in self.sofr_swaps]
         self.swap_knot_dates = np.array([next_biz_day] + swap_dates)
-        self.swap_knot_values = 0.03 * np.ones((1, len(self.swap_knot_dates)))
+        self.swap_knot_values = 0.03 * np.ones((len(self.swap_knot_dates), ))
 
     def load_market_data(self, sofr_3m_futures, sofr_1m_futures=None, sofr_swaps=None, sofr_fras=None):
         """
@@ -132,25 +172,32 @@ class USDSOFRCurve:
         res = 0.0
 
         for fut in self.sofr_1m_futures:
-            reference_dates = pd.date_range(fut.reference_start_date, fut.reference_end_date)
-            if fut.reference_start_date < self.reference_date:
-                price = price_1m_future(reference_dates, self.future_knot_dates, knot_values)
-            else:
-                price = price_1m_future(reference_dates, self.future_knot_dates, knot_values)
-            res += 0.5 * (fut.price - price) ** 2
+            reference_dates = pd.date_range(fut.reference_start_date, fut.reference_end_date).date
+            price = price_1m_future(reference_dates, self.future_knot_dates, knot_values, self.fixings)
+            mkt_price = self.market_instruments["SOFR1M"][fut.ticker]
+            res += 0.5 * (mkt_price - price) ** 2
 
         for fut in self.sofr_3m_futures:
             reference_dates = NYFED.biz_date_range(fut.reference_start_date, fut.reference_end_date)
-            price = price_3m_future(reference_dates, self.future_knot_dates, self.future_knot_values)
-            res += (fut.price - price) ** 2
+            if fut.reference_start_date not in reference_dates:
+                reference_dates = np.insert(reference_dates, 0, fut.reference_start_date)
+            if fut.reference_end_date not in reference_dates:
+                reference_dates = np.insert(reference_dates, -1, fut.reference_end_date)
+            price = price_3m_future(reference_dates, self.future_knot_dates, knot_values, self.fixings)
+            mkt_price = self.market_instruments["SOFR3M"][fut.ticker]
+            res += (mkt_price - price) ** 2
 
-        res += 1e2 * np.sum(np.diff(knot_values) ** 2)
+        res += 1e4 * np.sum(np.diff(knot_values) ** 2)
         return res
 
     def build_future_curve(self):
         initial_rates = self.future_knot_values
-        bounds = (0.0, 0.20)
-        result = least_squares(self.futures_objective_function, initial_rates, bounds=bounds)
+        bounds = Bounds(0.0, 0.10)
+        result = minimize(self.futures_objective_function,
+                          initial_rates,
+                          method="SLSQP",
+                          bounds=bounds,
+                          options={'ftol': 1e-5})
         self.future_knot_values = result.x
     #
     # def build_curve(self):
@@ -346,4 +393,5 @@ if __name__ == '__main__':
         "30Y": 0.0336
     })
     curve.load_market_data(sofr_3m_prices, sofr_1m_prices, sofr_swaps_rates)
+    curve.build_future_curve()
     exit(0)

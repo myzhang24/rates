@@ -1,6 +1,6 @@
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
-from datetime import datetime
+import datetime as dt
 from holiday import SIFMA
 
 
@@ -17,17 +17,6 @@ class SOFRFuturesBase:
     def parse_ticker(self):
         # This method will be overridden in child classes
         pass
-
-    def adjust_to_business_day(self, date, convention='following'):
-        if convention == 'following':
-            while not SIFMA.is_biz_day(date):
-                date += pd.Timedelta(days=1)
-        elif convention == 'preceding':
-            while not SIFMA.is_biz_day(date):
-                date -= pd.Timedelta(days=1)
-        else:
-            raise ValueError("Unsupported convention. Use 'following' or 'preceding'.")
-        return date
 
     def get_next_ticker(self):
         # This method will be overridden in child classes
@@ -77,9 +66,9 @@ class SOFR1MFutures(SOFRFuturesBase):
         self.month = self.MONTH_CODES[month_code]
 
         # 1M futures reference to first to last calendar day
-        start_date = pd.Timestamp(datetime(self.year, self.month, 1))
-        end_date = start_date + MonthEnd(0)
-        self.expiry_date = self.adjust_to_business_day(end_date, convention='preceding')
+        start_date = dt.date(self.year, self.month, 1)
+        end_date = (start_date + MonthEnd(0)).date()
+        self.expiry_date = SIFMA.prev_biz_day(end_date, 0)
         self.reference_start_date = start_date
         self.reference_end_date = end_date
 
@@ -112,7 +101,7 @@ class SOFR1MFutures(SOFRFuturesBase):
 
 def get_nth_weekday_of_month(year, month, n, weekday):
     # weekday: Monday=0, Sunday=6
-    first_day = pd.Timestamp(datetime(year, month, 1))
+    first_day = dt.date(year, month, 1)
     days_until_weekday = (weekday - first_day.weekday() + 7) % 7
     nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
     return nth_weekday
@@ -153,7 +142,7 @@ class SOFR3MFutures(SOFRFuturesBase):
 
         # Reference period is from the previous IMM date to the day before the contract's expiry date
         self.reference_start_date = self.get_previous_imm_date()
-        self.reference_end_date = self.expiry_date - pd.Timedelta(days=1)
+        self.reference_end_date = self.expiry_date - dt.timedelta(days=1)
 
     def get_previous_imm_date(self):
         # Calculate the third Wednesday three months before the contract month
@@ -263,9 +252,9 @@ if __name__ == '__main__':
     sofr1m = SOFR1MFutures('SERM4')
     print("SOFR 1M Futures:")
     print(f"Ticker: {sofr1m.ticker}")
-    print(f"Expiry Date: {sofr1m.expiry_date.date()}")
-    print(f"Reference Start Date: {sofr1m.reference_start_date.date()}")
-    print(f"Reference End Date: {sofr1m.reference_end_date.date()}")
+    print(f"Expiry Date: {sofr1m.expiry_date}")
+    print(f"Reference Start Date: {sofr1m.reference_start_date}")
+    print(f"Reference End Date: {sofr1m.reference_end_date}")
     print(f"Next Ticker: {sofr1m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr1m.get_previous_ticker()}")
 
@@ -273,14 +262,14 @@ if __name__ == '__main__':
     sofr3m = SOFR3MFutures('SFRU4')
     print("\nSOFR 3M Futures:")
     print(f"Ticker: {sofr3m.ticker}")
-    print(f"Expiry Date: {sofr3m.expiry_date.date()}")
-    print(f"Reference Start Date: {sofr3m.reference_start_date.date()}")
-    print(f"Reference End Date: {sofr3m.reference_end_date.date()}")
+    print(f"Expiry Date: {sofr3m.expiry_date}")
+    print(f"Reference Start Date: {sofr3m.reference_start_date}")
+    print(f"Reference End Date: {sofr3m.reference_end_date}")
     print(f"Next Ticker: {sofr3m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr3m.get_previous_ticker()}")
 
     # Example of generation
-    ref_date = datetime(2023, 3, 15)
+    ref_date = dt.datetime(2023, 3, 15)
     tickers_3m = get_sofr_3m_futures(ref_date)
     tickers_1m = get_sofr_1m_futures(ref_date)
     print(f"\nThe 13 SOFR 1M futures as of {ref_date.date()} are")

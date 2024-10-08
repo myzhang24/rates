@@ -3,18 +3,19 @@ This module generates the swap schedule for a USD SOFR OIS swap with market conv
 Roll convention of End of Month and IMM are supported.
 """
 
+import datetime as dt
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
 from holiday import SIFMA
 
 
-def fra_start_end_date(ref_date, short_hand):
+def fra_start_end_date(ref_date, short_hand) -> (dt.date, dt.date):
     ref_date = pd.Timestamp(ref_date)
     a, b = [int(x) for x in short_hand.split("x")]
     unadj_start = ref_date + pd.DateOffset(months=a)
     unadj_end = ref_date + pd.DateOffset(months=b)
-    return unadj_start, unadj_end
+    return unadj_start.date(), unadj_end.date()
 
 
 def adjust_date(date, convention):
@@ -59,7 +60,7 @@ class SOFRSwap:
             pay_delay=2,
             coupon=0.05
     ):
-        self.start_date = pd.Timestamp(start_date)
+        self.start_date = pd.Timestamp(start_date).date()
         self.tenor = tenor  # Stored for convenience
         self.notional = notional
         self.frequency_fixed = frequency_fixed
@@ -125,7 +126,7 @@ class SOFRSwap:
                 'Day Count Fraction': dcf
             })
 
-        return schedule
+        return pd.DataFrame(schedule)
 
     def generate_unadjusted_dates(self, start_date, end_date, freq_num, freq_unit):
         # Generate dates from end date backward
@@ -244,13 +245,7 @@ if __name__ == '__main__':
     float_schedule = swap.get_float_leg_schedule()
 
     print("Fixed Leg Schedule:")
-    print(f"{'Period':<6} {'Accrual Start':<15} {'Accrual End':<15} {'Payment Date':<15} {'DCF':<10}")
-    for i, period in enumerate(fixed_schedule, 1):
-        print(
-            f"{i:<6} {period['Accrual Start Date'].strftime('%Y-%m-%d'):<15} {period['Accrual End Date'].strftime('%Y-%m-%d'):<15} {period['Payment Date'].strftime('%Y-%m-%d'):<15} {period['Day Count Fraction']:<10.6f}")
+    print(fixed_schedule)
 
     print("\nFloating Leg Schedule:")
-    print(f"{'Period':<6} {'Accrual Start':<15} {'Accrual End':<15} {'Payment Date':<15} {'DCF':<10}")
-    for i, period in enumerate(float_schedule, 1):
-        print(
-            f"{i:<6} {period['Accrual Start Date'].strftime('%Y-%m-%d'):<15} {period['Accrual End Date'].strftime('%Y-%m-%d'):<15} {period['Payment Date'].strftime('%Y-%m-%d'):<15} {period['Day Count Fraction']:<10.6f}")
+    print(float_schedule)
