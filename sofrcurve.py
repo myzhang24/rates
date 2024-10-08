@@ -7,7 +7,7 @@ from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures
 from fomc import generate_fomc_meeting_dates
 from dateutil.relativedelta import relativedelta
-from fixings import load_fixings
+from fixings import load_SOFR_fixings
 from jax import jit
 import jax.numpy as jnp
 
@@ -74,7 +74,7 @@ class USDSOFRCurve:
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
-        self.fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
+        self.fixings = 1e-2 * load_SOFR_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
 
     def initialize_future_knot_dates(self):
         """
@@ -165,16 +165,15 @@ class USDSOFRCurve:
         fixing_dates = convert_to_1904(self.fixings.index)
         fixing_values = jnp.array(self.fixings.values)
 
-        last_fixing = fixing_values[-1]
-
         knot_dates = convert_to_1904(self.future_knot_dates)
         initial_values = 0.05 * jnp.ones_like(knot_dates, dtype=float)
 
-        penalty_1m = jnp.ones_like(fut_price_1m)
+        penalty_1m = 0.25 * jnp.ones_like(fut_price_1m)
+        penalty_1m.at[1:4].set(0.75)
+
         penalty_3m = jnp.ones_like(fut_price_3m)
-        penalty_1m.at[5:].set(0.5)
-        penalty_3m.at[0].set(0.5)
-        penalty_3m.at[5:].set(0.5)
+        penalty_3m.at[0].set(0.25)
+        penalty_3m.at[7:].set(0.5)
 
         # Write the objective function
         def futures_objective_function(knot_values):
@@ -199,8 +198,7 @@ class USDSOFRCurve:
 
             res = jnp.sum(penalty_1m * (prices_1m - fut_price_1m) ** 2)
             res += jnp.sum(penalty_3m * (prices_3m - fut_price_3m) ** 2)
-            res += 0.1 * 1e4 * jnp.sum(jnp.diff(knot_values) ** 2)
-            res += 0.2 * 1e4 * (last_fixing - knot_values[0]) ** 2
+            res += 1e2 * jnp.sum(jnp.diff(knot_values) ** 2)
             return res
 
         # Use jax lbfgsb to minimize with jit and autodiff
@@ -276,29 +274,29 @@ class USDSOFRCurve:
 # Example usage
 if __name__ == '__main__':
     sofr_1m_prices = pd.Series({
-        "SERV24": 95.1525,
+        "SERV24": 95.15,
         "SERX24": 95.315,
-        "SERZ24": 95.44,
-        "SERF25": 95.61,
-        "SERG25": 95.81,
-        "SERH25": 95.89,
-        "SERJ25": 96.02,
-        "SERK25": 96.13,
-        "SERM25": 96.21,
-        "SERN25": 96.305,
-        "SERQ25": 96.39,
-        "SERU25": 96.415,
+        "SERZ24": 95.455,
+        "SERF25": 95.64,
+        "SERG25": 95.84,
+        "SERH25": 95.925,
+        "SERJ25": 96.06,
+        "SERK25": 96.175,
+        # "SERM25": 96.,
+        "SERN25": 96.345,
+        "SERQ25": 96.425,
+        # "SERU25": 96.415,
     }, name="SOFR1M")
     sofr_3m_prices = pd.Series({
-        "SFRU24": 95.21,
-        "SFRZ24": 95.705,
-        "SFRH25": 96.09,
-        "SFRM25": 96.35,
-        "SFRU25": 96.515,
-        "SFRZ25": 96.605,
-        "SFRH26": 96.655,
-        "SFRM26": 96.67,
-        "SFRU26": 96.67
+        "SFRU24": 95.2125,
+        "SFRZ24": 95.71,
+        "SFRH25": 96.105,
+        "SFRM25": 96.365,
+        "SFRU25": 96.53,
+        "SFRZ25": 96.625,
+        "SFRH26": 96.67,
+        "SFRM26": 96.685,
+        "SFRU26": 96.68
     }, name="SOFR3M")
     sofr_swaps_rates = pd.Series({
         "1Y": 0.0389,
@@ -310,7 +308,7 @@ if __name__ == '__main__':
         "30Y": 0.0336
     })
 
-    curve = USDSOFRCurve("2024-10-01")
+    curve = USDSOFRCurve("2024-10-08")
     curve.load_market_data(sofr_3m_prices, sofr_1m_prices, sofr_swaps_rates)
     curve.build_future_curve()
     curve.plot_future_daily_forwards()
