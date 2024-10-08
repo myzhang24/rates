@@ -1,15 +1,33 @@
+import datetime as dt
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize, Bounds
-from holiday import SIFMA, NYFED
+from jaxopt import ScipyBoundedMinimize
+from holiday import SIFMA
 from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures
 from fomc import generate_fomc_meeting_dates
 from dateutil.relativedelta import relativedelta
 from fixings import load_fixings
+from jax import jit
+import jax.numpy as jnp
 
 
-def last_published_value(reference_dates, knot_dates, knot_values) -> np.ndarray:
+# Use 1904 date format
+base_date_1904 = dt.datetime(1904, 1, 1)
+
+def convert_to_1904(dates: pd.DatetimeIndex | np.ndarray | list) -> jnp.array:
+    # If it's a pandas DatetimeIndex, convert to an array of datetime
+    if isinstance(dates, pd.DatetimeIndex):
+        dates = dates.to_pydatetime()
+
+    # Convert each date to Excel 1904 integer format
+    return jnp.array([(dt - base_date_1904).days for dt in dates])
+
+# Some Jax pricing routines
+@jit
+def last_published_value(reference_dates: jnp.ndarray,
+                         knot_dates: jnp.ndarray,
+                         knot_values: jnp.ndarray) -> jnp.ndarray:
     """
     This function looks up reference_values for reference_dates according to knot_dates, knot_values
     :param reference_dates:
@@ -17,71 +35,26 @@ def last_published_value(reference_dates, knot_dates, knot_values) -> np.ndarray
     :param knot_values:
     :return:
     """
-    indices = np.searchsorted(knot_dates, reference_dates, side='right') - 1
+    indices = jnp.searchsorted(knot_dates, reference_dates, side='right') - 1
+    indices = jnp.clip(indices, 0, len(knot_values) - 1)
+    return knot_values[indices]
 
-    # Initialize D with NaN values
-    res = np.full(len(reference_dates), np.nan)
-
-    # Assign values from C to D where valid indices are found
-    valid_mask = indices >= 0
-    res[valid_mask] = knot_values[indices[valid_mask]]
-    return res
-
-
-def price_1m_future(reference_dates, knot_dates, knot_values, fixings=None):
-    """
-    This function prices 1m SOFR futures based on constant meeting-to-meeting daily forwards (in risk neutral measure)
-    :param reference_dates:
-    :param knot_dates:
-    :param knot_values:
-    :param fixings:
-    :return:
-    """
-    if reference_dates[0] < knot_dates[0]:
-        fixings_to_use = fixings[NYFED.prev_biz_day(reference_dates[0], 1):knot_dates[0]]
-        knots = np.concatenate([fixings_to_use.index.date, knot_dates])
-        values = np.concatenate([fixings_to_use.values, knot_values])
-    else:
-        knots = knot_dates
-        values = knot_values
-    reference_rates = last_published_value(reference_dates, knots, values)
-    return np.round(1e2 * (1 - reference_rates.mean()), 4)
-
-
-def price_3m_future(reference_dates, knot_dates, knot_values, fixings=None):
-    """
-    This function prices 3m SOFR futures based on constant meeting-to-meeting daily forwards (in risk neutral measure)
-    :param reference_dates:
-    :param knot_dates:
-    :param knot_values:
-    :param fixings:
-    :return:
-    """
-    if reference_dates[0] < knot_dates[0]:
-        fixings_to_use = fixings[NYFED.prev_biz_day(reference_dates[0], 1):knot_dates[0]]
-        knots = np.concatenate([fixings_to_use.index.date, knot_dates])
-        values = np.concatenate([fixings_to_use.values, knot_values])
-    else:
-        knots = knot_dates
-        values = knot_values
-    reference_rates = last_published_value(reference_dates, knots, values)
-    return np.round(1e2 * (1 - sofr_compound(reference_dates, reference_rates)), 4)
-
-
-def sofr_compound(reference_dates, reference_rates):
+@jit
+def sofr_compound(reference_dates: jnp.ndarray,
+                  reference_rates: jnp.ndarray):
     """
     This function computes the compounded SOFR rate given the fixings
     :param reference_dates:
     :param reference_rates:
     :return:
     """
-    num_days = pd.Series(reference_dates).diff().dt.days.to_numpy()[1:]
+    num_days = jnp.diff(reference_dates)
     rates = reference_rates[:-1]
-    annualized_rate = np.prod(1 + rates * num_days / 360) - 1
-    assert int(num_days.sum()) == (reference_dates[-1] - reference_dates[0]).days
+    annualized_rate = jnp.prod(1 + rates * num_days / 360) - 1
     return 360 * annualized_rate / num_days.sum()
 
 
+# USE SOFR curve class
 class USDSOFRCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date).to_pydatetime()
@@ -101,9 +74,6 @@ class USDSOFRCurve:
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
-        self.fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
-        self.future_knot_values[0] = self.fixings.iloc[-1]
-
     def initialize_future_knot_dates(self):
         """
         This function initializes the future curve knot dates given by FOMC meeting effective dates
@@ -118,14 +88,12 @@ class USDSOFRCurve:
             self.future_knot_dates = np.array([next_biz_day] + effective_dates)
         else:
             self.future_knot_dates = np.array(effective_dates)
-        self.future_knot_values = 0.03 * np.ones((len(self.future_knot_dates), ))
 
     def initialize_swap_knot_dates(self):
         # Initialize knots for swaps
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
         swap_dates = [x.fixed_leg_schedule.iloc[-1].loc[self.swap_knot_policy] for x in self.sofr_swaps]
         self.swap_knot_dates = np.array([next_biz_day] + swap_dates)
-        self.swap_knot_values = 0.03 * np.ones((len(self.swap_knot_dates), ))
 
     def load_market_data(self, sofr_3m_futures, sofr_1m_futures=None, sofr_swaps=None, sofr_fras=None):
         """
@@ -165,41 +133,77 @@ class USDSOFRCurve:
 
         self.initialize_swap_knot_dates()
 
-    def futures_objective_function(self, knot_values):
-        """
-        Build the constant meeting daily forward futures curve
-        :return:
-        """
-        res = 0.0
+    def swap_reference_arrays(self):
+        pass
 
+    def future_1m_reference_arrays(self):
+        # 1M futures
+        ref_dates_1m = []
         for fut in self.sofr_1m_futures:
-            reference_dates = pd.date_range(fut.reference_start_date, fut.reference_end_date).date
-            price = price_1m_future(reference_dates, self.future_knot_dates, knot_values, self.fixings)
-            mkt_price = self.market_instruments["SOFR1M"][fut.ticker]
-            res += 0.5 * (mkt_price - price) ** 2
+            ref_dates_1m.append(convert_to_1904(fut.reference_array()))
+        return ref_dates_1m
 
+    def future_3m_reference_arrays(self):
+        # 3M futures
+        ref_dates_3m = []
         for fut in self.sofr_3m_futures:
-            reference_dates = NYFED.biz_date_range(fut.reference_start_date, fut.reference_end_date)
-            if fut.reference_start_date not in reference_dates:
-                reference_dates = np.insert(reference_dates, 0, fut.reference_start_date)
-            if fut.reference_end_date not in reference_dates:
-                reference_dates = np.insert(reference_dates, -1, fut.reference_end_date)
-            price = price_3m_future(reference_dates, self.future_knot_dates, knot_values, self.fixings)
-            mkt_price = self.market_instruments["SOFR3M"][fut.ticker]
-            res += (mkt_price - price) ** 2
+            ref_dates_3m.append(convert_to_1904(fut.reference_array()))
+        return ref_dates_3m
 
-        res += 1e4 * np.sum(np.diff(knot_values) ** 2)
-        return res
+
 
     def build_future_curve(self):
-        initial_rates = self.future_knot_values
-        bounds = Bounds(0.0, 0.10)
-        result = minimize(self.futures_objective_function,
-                          initial_rates,
-                          method="SLSQP",
-                          bounds=bounds,
-                          options={'ftol': 1e-5})
-        self.future_knot_values = result.x
+        ref_array_1m = self.future_1m_reference_arrays()
+        ref_array_3m = self.future_3m_reference_arrays()
+
+        fut_price_1m = jnp.array(self.market_instruments["SOFR1M"].values)
+        fut_price_3m = jnp.array(self.market_instruments["SOFR3M"].values)
+
+        fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
+        fixing_dates = convert_to_1904(fixings.index)
+        fixing_values = jnp.array(fixings.values)
+
+        last_fixing = fixing_values[-1]
+
+        knot_dates = convert_to_1904(self.future_knot_dates)
+        initial_values = 0.05 * jnp.ones_like(knot_dates, dtype=float)
+
+        def futures_objective_function(knot_values):
+            """
+            Build the constant meeting daily forward futures curve
+            :return:
+            """
+            prices_1m = jnp.zeros_like(fut_price_1m)
+            prices_3m = jnp.zeros_like(fut_price_3m)
+
+            knot_to_use = jnp.concatenate([fixing_dates, knot_dates])
+            value_to_use = jnp.concatenate([fixing_values, knot_values])
+
+            for i in range(prices_1m.shape[0]):
+                price = 1e2 * ( 1 - jnp.mean(last_published_value(ref_array_1m[i], knot_to_use, value_to_use)).squeeze())
+                prices_1m = prices_1m.at[i].set(price)
+
+            for i in range(prices_3m.shape[0]):
+                rates = last_published_value(ref_array_3m[i], knot_to_use, value_to_use)
+                price = 1e2 * (1 - sofr_compound(ref_array_3m[i], rates).squeeze())
+                prices_3m = prices_3m.at[i].set(price)
+
+            res = 0.5 * jnp.sum((prices_1m - fut_price_1m) ** 2)
+            res += jnp.sum((prices_3m - fut_price_3m) ** 2)
+            res += 0.1 * 1e4 * jnp.sum(jnp.diff(knot_values) ** 2)
+            res += 0.5 * 1e4 * (last_fixing - knot_values[0]) ** 2
+            return res
+
+        # Use jax lbfgsb to minimize with jit and autodiff
+        lbfgsb = ScipyBoundedMinimize(fun=futures_objective_function, method="l-bfgs-b", jit=True)
+        lower_bounds = jnp.zeros_like(initial_values)
+        upper_bounds = jnp.ones_like(initial_values) * 0.1
+        bounds = (lower_bounds, upper_bounds)
+        res = lbfgsb.run(initial_values, bounds=bounds).params
+        self.future_knot_values = res
+
+
+
     #
     # def build_curve(self):
     #     """

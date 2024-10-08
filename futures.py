@@ -115,14 +115,13 @@ class SOFR1MFutures(SOFRFuturesBase):
         prev_ticker = f"SER{month_code}{year_code}"
         return prev_ticker
 
-    def reference_array(self) -> np.ndarray:
+    def reference_array(self):
         """
         Returns a reference array of SOFR reference days, first of month to end of month calendar days inclusive
         :return:
         """
         dates = pd.date_range(self.reference_start_date, self.reference_end_date, freq="1D")
-        timestamp_array = (dates.astype(np.int64) // 10**9).to_numpy().astype(np.int32)
-        return timestamp_array
+        return dates
 
 class SOFR3MFutures(SOFRFuturesBase):
     QUARTERLY_MONTHS = {
@@ -204,13 +203,13 @@ class SOFR3MFutures(SOFRFuturesBase):
         prev_ticker = f"SFR{month_code}{year_code}"
         return prev_ticker
 
-    def reference_array(self) -> np.ndarray:
+    def reference_array(self):
         dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
         if self.reference_start_date not in dates:
             dates = np.insert(dates, 0 , self.reference_start_date)
         if self.reference_end_date not in dates:
             dates = np.insert(dates, -1, self.reference_end_date)
-        return (dates.astype(np.int64) // 1e9).to_numpy().astype(np.int32)
+        return dates
 
 if __name__ == '__main__':
     # Example for SOFR 1M Futures
