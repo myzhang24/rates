@@ -4,6 +4,16 @@ import datetime as dt
 from holiday import SIFMA
 
 
+# Auxiliary functions
+def get_nth_weekday_of_month(year, month, n, weekday):
+    # weekday: Monday=0, Sunday=6
+    first_day = dt.datetime(year, month, 1)
+    days_until_weekday = (weekday - first_day.weekday() + 7) % 7
+    nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
+    return nth_weekday
+
+
+# SOFR Future base class
 class SOFRFuturesBase:
     def __init__(self, ticker):
         self.ticker = ticker.upper()
@@ -26,7 +36,12 @@ class SOFRFuturesBase:
         # This method will be overridden in child classes
         pass
 
+    def prepare_reference_array(self):
+        # This method will be overridden in child classes
+        pass
 
+
+# SOFR 1M futures class
 class SOFR1MFutures(SOFRFuturesBase):
     MONTH_CODES = {
         'F': 1,  # January
@@ -66,8 +81,8 @@ class SOFR1MFutures(SOFRFuturesBase):
         self.month = self.MONTH_CODES[month_code]
 
         # 1M futures reference to first to last calendar day
-        start_date = dt.date(self.year, self.month, 1)
-        end_date = (start_date + MonthEnd(0)).date()
+        start_date = dt.datetime(self.year, self.month, 1)
+        end_date = (start_date + MonthEnd(0)).to_pydatetime()
         self.expiry_date = SIFMA.prev_biz_day(end_date, 0)
         self.reference_start_date = start_date
         self.reference_end_date = end_date
@@ -98,14 +113,8 @@ class SOFR1MFutures(SOFRFuturesBase):
         prev_ticker = f"SER{month_code}{year_code}"
         return prev_ticker
 
-
-def get_nth_weekday_of_month(year, month, n, weekday):
-    # weekday: Monday=0, Sunday=6
-    first_day = dt.date(year, month, 1)
-    days_until_weekday = (weekday - first_day.weekday() + 7) % 7
-    nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
-    return nth_weekday
-
+    def reference_dates(self):
+        pass
 
 class SOFR3MFutures(SOFRFuturesBase):
     QUARTERLY_MONTHS = {

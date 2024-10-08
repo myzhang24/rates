@@ -15,7 +15,7 @@ def fra_start_end_date(ref_date, short_hand) -> (dt.date, dt.date):
     a, b = [int(x) for x in short_hand.split("x")]
     unadj_start = ref_date + pd.DateOffset(months=a)
     unadj_end = ref_date + pd.DateOffset(months=b)
-    return unadj_start.date(), unadj_end.date()
+    return unadj_start.as_pydatetime(), unadj_end.as_pydatetime()
 
 
 def adjust_date(date, convention):
@@ -60,7 +60,7 @@ class SOFRSwap:
             pay_delay=2,
             coupon=0.05
     ):
-        self.start_date = pd.Timestamp(start_date).date()
+        self.start_date = pd.Timestamp(start_date).to_pydatetime()
         self.tenor = tenor  # Stored for convenience
         self.notional = notional
         self.frequency_fixed = frequency_fixed
@@ -94,6 +94,7 @@ class SOFRSwap:
         # EOM roll convention
         if self.roll_convention == "EOM":
             end_date += MonthEnd(0)
+            end_date = end_date.to_pydatetime()
         return end_date
 
     def generate_leg_schedule(self, frequency):
@@ -144,6 +145,7 @@ class SOFRSwap:
             # Apply EOM roll convention
             if self.roll_convention == 'EOM':
                 prev_date = prev_date + MonthEnd(0)
+                prev_date = prev_date.to_pydatetime()
 
             if prev_date <= start_date:
                 if prev_date < start_date:
@@ -189,8 +191,8 @@ class SOFRFRA:
         roll_convention='None',  # 'None', 'EOM'
         pay_delay=2
     ):
-        self.effective_date = pd.Timestamp(effective_date)
-        self.maturity_date = pd.Timestamp(maturity_date)
+        self.effective_date = pd.Timestamp(effective_date).to_pydatetime()
+        self.maturity_date = pd.Timestamp(maturity_date).to_pydatetime()
         self.notional = notional
         self.fixed_rate = fixed_rate
         self.day_count = day_count

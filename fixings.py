@@ -4,7 +4,7 @@ import datetime as dt
 __SOFR__FIXINGS = "fixings/SOFR.pkl"
 
 
-def load_fixings(from_date, as_of):
+def load_fixings(from_date: dt.datetime, as_of: dt.datetime):
     df = pd.read_pickle(__SOFR__FIXINGS)
     return df[from_date:as_of]
 

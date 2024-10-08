@@ -86,19 +86,19 @@ class Holidays:
         dt = pd.Timestamp(dt) - pd.Timedelta(days=shift)
         while not self.is_biz_day(dt):
             dt -= pd.Timedelta(days=1)
-        return dt.date()
+        return dt.to_pydatetime()
 
     def next_biz_day(self, dt, shift=1) -> dt.date:
         dt = pd.Timestamp(dt) + pd.Timedelta(days=shift)
         while not self.is_biz_day(dt):
             dt += pd.Timedelta(days=1)
-        return dt.date()
+        return dt.to_pydatetime()
 
     def biz_date_range(self, st, et) -> np.ndarray:
         st = pd.Timestamp(st)
         et = pd.Timestamp(et)
         dates = pd.date_range(start=st, end=et, freq='D')
-        biz_days = np.array([dt.date() for dt in dates if self.is_biz_day(dt)])
+        biz_days = np.array([dt.to_pydatetime() for dt in dates if self.is_biz_day(dt)])
         return biz_days
 
 
