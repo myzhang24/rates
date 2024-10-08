@@ -59,7 +59,7 @@ class USDSOFRCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date).to_pydatetime()
 
-        self.market_instruments = []
+        self.market_instruments = {}
         self.sofr_1m_futures = []
         self.sofr_3m_futures = []
         self.sofr_fras = []
@@ -132,6 +132,7 @@ class USDSOFRCurve:
                 self.sofr_swaps.append(SOFRSwap(start_date, key.upper()))
 
         self.initialize_swap_knot_dates()
+        return self
 
     def swap_reference_arrays(self):
         pass
@@ -201,8 +202,55 @@ class USDSOFRCurve:
         bounds = (lower_bounds, upper_bounds)
         res = lbfgsb.run(initial_values, bounds=bounds).params
         self.future_knot_values = res
+        return self
 
+    def plot_future_daily_forwards(self):
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
 
+        # Assuming self.future_knot_values and self.future_knot_dates are defined elsewhere
+        df = 1e2 * pd.DataFrame(np.array(self.future_knot_values), index=self.future_knot_dates)
+
+        # Create a dotted black line plot with step interpolation (left-continuous)
+        plt.step(df.index, df.iloc[:, 0], where='post', linestyle=':', color='black')
+
+        # Add black solid dots at the actual dates and values
+        plt.scatter(df.index, df.iloc[:, 0], color='black', s=10, zorder=5)
+
+        # Get current axis
+        ax = plt.gca()
+
+        # Set the y-axis limits
+        ax.set_ylim(3.0, 5.25)
+
+        # Set major ticks at multiples of 0.25
+        ax.yaxis.set_major_locator(plt.MultipleLocator(0.25))
+
+        # Ensure the y-axis labels are shown at multiples of 0.25
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda val, pos: '{:.2f}'.format(val)))
+
+        # Format the x-axis to show date as "YY' MMM" (e.g., "24' Oct")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%y' %b"))
+
+        # Ensure that every month has a tick/label
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+
+        # Set the x-axis labels to be vertical
+        plt.xticks(rotation=90, ha='center')
+
+        # Make the gridlines more transparent (increase transparency with alpha)
+        ax.grid(which='major', axis='y', linestyle='-', linewidth='0.5', color='gray', alpha=0.3)
+
+        # Optional: Add labels and title
+        plt.xlabel('Date')
+        plt.ylabel('SOFR Daily Forwards')
+        plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
+
+        # Show the plot
+        plt.tight_layout()
+        plt.show()
+
+        return self
 
     #
     # def build_curve(self):
@@ -399,4 +447,5 @@ if __name__ == '__main__':
     })
     curve.load_market_data(sofr_3m_prices, sofr_1m_prices, sofr_swaps_rates)
     curve.build_future_curve()
+    curve.plot_future_daily_forwards()
     exit(0)
