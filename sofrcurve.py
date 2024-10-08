@@ -246,6 +246,9 @@ class USDSOFRCurve:
         return prices_3m
 
     def plot_future_daily_forwards(self):
+        """
+        Plots the future daily forward rates with additional annotations for the first four step differences.
+        """
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
@@ -266,6 +269,16 @@ class USDSOFRCurve:
         plt.xlabel('Date')
         plt.ylabel('SOFR Daily Forwards')
         plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
+
+        # Adding annotations for the first six step differences
+        step_diffs = 1e2 * np.diff(df.iloc[:7, 0])  # Calculate the differences for the first 4 steps
+        for i in range(6):
+            x_pos = df.index[i + 1]
+            y_pos = df.iloc[i + 1, 0]
+            plt.annotate(f"{step_diffs[i]:.1f} bps", xy=(x_pos, y_pos),
+                         xytext=(x_pos, y_pos + 0.05),  # Offset annotation slightly for clarity
+                         fontsize=9, color='blue')
+
         plt.tight_layout()
         plt.show()
 
