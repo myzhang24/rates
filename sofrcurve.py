@@ -5,6 +5,7 @@ from holiday import SIFMA, NYFED
 from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
 from futures import SOFR1MFutures, SOFR3MFutures
 from fomc import generate_fomc_meeting_dates
+from dateutil.relativedelta import relativedelta
 from fixings import load_fixings
 
 
@@ -83,7 +84,7 @@ def sofr_compound(reference_dates, reference_rates):
 
 class USDSOFRCurve:
     def __init__(self, reference_date):
-        self.reference_date = pd.Timestamp(reference_date).date()
+        self.reference_date = pd.Timestamp(reference_date).to_pydatetime()
 
         self.market_instruments = []
         self.sofr_1m_futures = []
@@ -100,7 +101,7 @@ class USDSOFRCurve:
         self.swap_knot_dates = None
         self.swap_knot_values = None
 
-        self.fixings = 1e-2 * load_fixings(self.reference_date - pd.DateOffset(months=4), self.reference_date)
+        self.fixings = 1e-2 * load_fixings(self.reference_date - relativedelta(months=4), self.reference_date)
         self.future_knot_values[0] = self.fixings.iloc[-1]
 
     def initialize_future_knot_dates(self):
@@ -110,7 +111,7 @@ class USDSOFRCurve:
         """
         # Initialize future knots
         far_out_date = self.reference_date + pd.DateOffset(years=self.future_curve_tenor)
-        meeting_dates = generate_fomc_meeting_dates(self.reference_date, far_out_date.date())
+        meeting_dates = generate_fomc_meeting_dates(self.reference_date, far_out_date)
         effective_dates = [SIFMA.next_biz_day(x, 1) for x in meeting_dates]
         next_biz_day = SIFMA.next_biz_day(self.reference_date, 0)
         if next_biz_day not in effective_dates:

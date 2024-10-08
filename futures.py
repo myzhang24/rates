@@ -1,6 +1,8 @@
+import datetime as dt
+import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
-import datetime as dt
+
 from holiday import SIFMA
 
 
@@ -36,7 +38,7 @@ class SOFRFuturesBase:
         # This method will be overridden in child classes
         pass
 
-    def prepare_reference_array(self):
+    def reference_array(self):
         # This method will be overridden in child classes
         pass
 
@@ -113,8 +115,14 @@ class SOFR1MFutures(SOFRFuturesBase):
         prev_ticker = f"SER{month_code}{year_code}"
         return prev_ticker
 
-    def reference_dates(self):
-        pass
+    def reference_array(self) -> np.ndarray:
+        """
+        Returns a reference array of SOFR reference days, first of month to end of month calendar days inclusive
+        :return:
+        """
+        dates = pd.date_range(self.reference_start_date, self.reference_end_date, freq="1D")
+        timestamp_array = (dates.astype(np.int64) // 10**9).to_numpy().astype(np.int32)
+        return timestamp_array
 
 class SOFR3MFutures(SOFRFuturesBase):
     QUARTERLY_MONTHS = {
@@ -147,21 +155,22 @@ class SOFR3MFutures(SOFRFuturesBase):
         self.month = self.QUARTERLY_MONTHS[month_code]
 
         # SOFR 3M Futures expire on the third Wednesday of the contract month
-        self.expiry_date = get_nth_weekday_of_month(self.year, self.month, 3, 2)  # 3rd Wednesday
+
 
         # Reference period is from the previous IMM date to the day before the contract's expiry date
-        self.reference_start_date = self.get_previous_imm_date()
+        self.reference_start_date = get_nth_weekday_of_month(self.year, self.month, 3, 2)  # 3rd Wednesday
+        self.expiry_date = self.get_next_imm_date()
         self.reference_end_date = self.expiry_date - dt.timedelta(days=1)
 
-    def get_previous_imm_date(self):
+    def get_next_imm_date(self):
         # Calculate the third Wednesday three months before the contract month
-        prev_month = self.month - 3
-        prev_year = self.year
-        if prev_month < 1:
-            prev_month += 12
-            prev_year -= 1
-        prev_imm_date = get_nth_weekday_of_month(prev_year, prev_month, 3, 2)  # 3rd Wednesday
-        return prev_imm_date
+        next_month = self.month + 3
+        next_year = self.year
+        if next_month > 12:
+            next_month -= 12
+            next_year += 1
+        next_imm_date = get_nth_weekday_of_month(next_year, next_month, 3, 2)  # 3rd Wednesday
+        return next_imm_date
 
     def get_next_ticker(self):
         # Move to the next quarterly month
@@ -196,66 +205,6 @@ class SOFR3MFutures(SOFRFuturesBase):
         return prev_ticker
 
 
-def get_sofr_1m_futures(reference_date, n=13):
-    """
-    Returns the tickers for the 13 consecutive live SOFR 1M futures (including stub).
-
-    Parameters:
-    - reference_date: datetime, the reference date for which the futures are live.
-
-    Returns:
-    - list of tickers for 13 consecutive SOFR 1M futures.
-    """
-    tickers = []
-    months = ['F', 'G', 'H', 'J', 'K', 'M', 'N', 'Q', 'U', 'V', 'X', 'Z']  # CME futures month codes
-    year = reference_date.year
-    month_index = reference_date.month - 1  # Index for the current month in futures code
-
-    for i in range(n):
-        ticker_month = months[month_index % 12]
-        ticker_year = str(year % 100)  # Use the last digit of the year for the ticker
-
-        ticker = f'SER{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 1M futures
-        tickers.append(ticker)
-
-        # Increment the month and adjust the year when needed
-        month_index += 1
-        if month_index % 12 == 0:
-            year += 1  # Increment the year after December
-
-    return tickers
-
-
-def get_sofr_3m_futures(reference_date, n=9):
-    """
-    Returns the tickers for the 16 consecutive live SOFR 3M futures (including stub).
-
-    Parameters:
-    - reference_date: datetime, the reference date for which the futures are live.
-
-    Returns:
-    - list of tickers for 16 consecutive SOFR 3M futures.
-    """
-    tickers = []
-    months = ['H', 'M', 'U', 'Z']  # CME quarterly futures month codes for March, June, September, December
-    year = reference_date.year
-    month_index = (reference_date.month - 1) // 3  # Quarterly month index
-
-    for i in range(n):
-        ticker_month = months[month_index % 4]
-        ticker_year = str(year % 100)  # Use the last digit of the year for the ticker
-
-        ticker = f'SFR{ticker_month}{ticker_year}'  # Assuming 'SER' prefix for SOFR 3M futures
-        tickers.append(ticker)
-
-        # Increment the quarter and adjust the year when needed
-        month_index += 1
-        if month_index % 4 == 0:
-            year += 1  # Increment the year after December quarter
-
-    return tickers
-
-
 if __name__ == '__main__':
     # Example for SOFR 1M Futures
     sofr1m = SOFR1MFutures('SERM4')
@@ -266,6 +215,7 @@ if __name__ == '__main__':
     print(f"Reference End Date: {sofr1m.reference_end_date}")
     print(f"Next Ticker: {sofr1m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr1m.get_previous_ticker()}")
+    sofr1m.reference_array()
 
     # Example for SOFR 3M Futures
     sofr3m = SOFR3MFutures('SFRU4')
@@ -276,12 +226,3 @@ if __name__ == '__main__':
     print(f"Reference End Date: {sofr3m.reference_end_date}")
     print(f"Next Ticker: {sofr3m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr3m.get_previous_ticker()}")
-
-    # Example of generation
-    ref_date = dt.datetime(2023, 3, 15)
-    tickers_3m = get_sofr_3m_futures(ref_date)
-    tickers_1m = get_sofr_1m_futures(ref_date)
-    print(f"\nThe 13 SOFR 1M futures as of {ref_date.date()} are")
-    print(tickers_1m)
-    print(f"The 16 SOFR 3M futures as of {ref_date.date()} are")
-    print(tickers_3m)
