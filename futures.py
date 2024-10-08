@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 
-from holiday import SIFMA
+from holiday import SIFMA, NYFED
 
 
 # Auxiliary functions
@@ -204,6 +204,13 @@ class SOFR3MFutures(SOFRFuturesBase):
         prev_ticker = f"SFR{month_code}{year_code}"
         return prev_ticker
 
+    def reference_array(self) -> np.ndarray:
+        dates = NYFED.biz_date_range(self.reference_start_date, self.reference_end_date)
+        if self.reference_start_date not in dates:
+            dates = np.insert(dates, 0 , self.reference_start_date)
+        if self.reference_end_date not in dates:
+            dates = np.insert(dates, -1, self.reference_end_date)
+        return (dates.astype(np.int64) // 1e9).to_numpy().astype(np.int32)
 
 if __name__ == '__main__':
     # Example for SOFR 1M Futures
@@ -226,3 +233,4 @@ if __name__ == '__main__':
     print(f"Reference End Date: {sofr3m.reference_end_date}")
     print(f"Next Ticker: {sofr3m.get_next_ticker()}")
     print(f"Previous Ticker: {sofr3m.get_previous_ticker()}")
+    sofr3m.reference_array()

@@ -94,11 +94,11 @@ class Holidays:
             dt += pd.Timedelta(days=1)
         return dt.to_pydatetime()
 
-    def biz_date_range(self, st, et) -> np.ndarray:
+    def biz_date_range(self, st, et) -> pd.Series:
         st = pd.Timestamp(st)
         et = pd.Timestamp(et)
         dates = pd.date_range(start=st, end=et, freq='D')
-        biz_days = np.array([dt.to_pydatetime() for dt in dates if self.is_biz_day(dt)])
+        biz_days = pd.to_datetime([dt for dt in dates if self.is_biz_day(dt)])
         return biz_days
 
 
