@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from jaxopt import ScipyBoundedMinimize
 from holiday import SIFMA
-from swaps import SOFRSwap, SOFRFRA, fra_start_end_date
+from swaps import SOFRSwap
 from futures import SOFR1MFutures, SOFR3MFutures
 from fomc import generate_fomc_meeting_dates
 from dateutil.relativedelta import relativedelta
@@ -122,11 +122,6 @@ class USDSOFRCurve:
         if sofr_1m_prices is not None:
             for key, price in sofr_1m_futures.items():
                 self.sofr_1m_futures.append(SOFR1MFutures(key.upper()))
-
-        if sofr_fras is not None:
-            for key, rate in sofr_fras.items():
-                start_date, end_date = fra_start_end_date(self.reference_date, key.upper())
-                self.sofr_fras.append(SOFRFRA(start_date, end_date))
 
         if sofr_swaps is not None:
             for key, rate in sofr_swaps.items():
@@ -270,7 +265,7 @@ class USDSOFRCurve:
         plt.ylabel('SOFR Daily Forwards')
         plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
 
-        # Adding annotations for the first six step differences
+        # Adding annotations for the first six step-differences
         step_diffs = 1e2 * np.diff(df.iloc[:7, 0])  # Calculate the differences for the first 4 steps
         for i in range(6):
             x_pos = df.index[i + 1]

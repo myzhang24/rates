@@ -49,53 +49,86 @@ def modified_preceding(date):
 class SOFRSwap:
     def __init__(
             self,
-            start_date,
+            reference_date=None,
+            start_date=None,
+            maturity_date=None,
             tenor='5Y',
             notional=1e6,
+            coupon=0.05,
             frequency_fixed='12M',  # Annual payments
             frequency_float='12M',  # Annual payments
             day_count='ACT/360',
             business_day_convention='Modified Following',
             roll_convention='None',  # 'None', 'EOM'
-            pay_delay=2,
-            coupon=0.05
+            pay_delay=2
     ):
-        self.start_date = pd.Timestamp(start_date).to_pydatetime()
+        self.start_date = start_date
+        self.maturity_date = maturity_date
         self.tenor = tenor  # Stored for convenience
         self.notional = notional
+        self.coupon = coupon
         self.frequency_fixed = frequency_fixed
         self.frequency_float = frequency_float
         self.day_count = day_count
         self.business_day_convention = business_day_convention
         self.roll_convention = roll_convention
-        self.end_date = self.calculate_end_date()
         self.pay_delay = pay_delay
+
+        self.calculate_start_end_date(reference_date)
         self.fixed_leg_schedule = self.generate_leg_schedule(self.frequency_fixed)
         self.float_leg_schedule = self.generate_leg_schedule(self.frequency_float)
-        self.coupon = coupon
 
-    def calculate_end_date(self):
-        num = int(self.tenor[:-1])
-        unit = self.tenor[-1].upper()
-        if unit == 'Y':
-            end_date = self.start_date + relativedelta(years=num)
-        elif unit == 'M':
-            end_date = self.start_date + relativedelta(months=num)
+
+    def calculate_start_end_date(self, reference_date):
+        # Getting the start date right
+        if self.start_date is not None:
+            try:
+                # If start_date is convertible to a date
+                self.start_date = pd.Timestamp(self.start_date).to_pydatetime()
+            except:
+                # If start_date is a tenor string for forward starting swaps
+                # Need reference date as input
+                reference_date = pd.Timestamp(reference_date).to_pydatetime()
+                spot_date = SIFMA.next_biz_day(reference_date, 2)
+                num = int(self.start_date[:-1])
+                unit = self.start_date[-1].upper()
+                if unit == 'Y':
+                    self.start_date = spot_date + relativedelta(years=num)
+                elif unit == 'M':
+                    self.start_date = spot_date + relativedelta(months=num)
+                else:
+                    raise ValueError("Unsupported tenor unit. Use 'Y' for years or 'M' for months.")
         else:
-            raise ValueError("Unsupported tenor unit. Use 'Y' for years or 'M' for months.")
+            reference_date = pd.Timestamp(reference_date).to_pydatetime()
+            self.start_date = SIFMA.next_biz_day(reference_date, 2)
+
+        # Getting maturity date right
+        try:
+            # If maturity_date is given as date
+            assert self.maturity_date is not None
+            self.maturity_date = pd.Timestamp(self.maturity_date).to_pydatetime()
+        except:
+            # In this case use tenor and start_date to calculate maturity date
+            num = int(self.tenor[:-1])
+            unit = self.tenor[-1].upper()
+            if unit == 'Y':
+                self.maturity_date = self.start_date + relativedelta(years=num)
+            elif unit == 'M':
+                self.maturity_date = self.start_date + relativedelta(months=num)
+            else:
+                raise ValueError("Unsupported tenor unit. Use 'Y' for years or 'M' for months.")
 
         # Roll day Adjust
         if isinstance(self.roll_convention, int):
             try:
-                end_date.replace(day=self.roll_convention)
+                self.maturity_date.replace(day=self.roll_convention)
             except:
                 pass
 
         # EOM roll convention
         if self.roll_convention == "EOM":
-            end_date += MonthEnd(0)
-            end_date = end_date.to_pydatetime()
-        return end_date
+            self.maturity_date += MonthEnd(0)
+            self.maturity_date = self.maturity_date.to_pydatetime()
 
     def generate_leg_schedule(self, frequency):
         schedule = []
@@ -104,7 +137,7 @@ class SOFRSwap:
         freq_unit = frequency[-1].upper()
 
         # Generate unadjusted roll dates
-        unadj_date_list = self.generate_unadjusted_dates(self.start_date, self.end_date, freq_num, freq_unit)
+        unadj_date_list = self.generate_unadjusted_dates(self.start_date, self.maturity_date, freq_num, freq_unit)
 
         # Adjust the roll dates using Modified Following convention by default
         adj_date_list = [adjust_date(d, self.business_day_convention) for d in unadj_date_list]
@@ -179,64 +212,10 @@ class SOFRSwap:
         }
 
 
-class SOFRFRA:
-    def __init__(
-        self,
-        effective_date,  # Accrual start date
-        maturity_date,   # Accrual end date
-        notional=1e6,
-        fixed_rate=0.05,  # Contract fixed rate
-        day_count='ACT/360',
-        business_day_convention='Modified Following',
-        roll_convention='None',  # 'None', 'EOM'
-        pay_delay=2
-    ):
-        self.effective_date = pd.Timestamp(effective_date).to_pydatetime()
-        self.maturity_date = pd.Timestamp(maturity_date).to_pydatetime()
-        self.notional = notional
-        self.fixed_rate = fixed_rate
-        self.day_count = day_count
-        self.business_day_convention = business_day_convention
-        self.roll_convention = roll_convention
-        self.pay_delay = pay_delay
-
-        # Adjust dates according to conventions
-        self.adjusted_effective_date = adjust_date(self.effective_date, self.business_day_convention)
-        self.adjusted_maturity_date = adjust_date(self.maturity_date, self.business_day_convention)
-
-        # Calculate day count fraction
-        self.day_count_fraction = self.calculate_day_count_fraction(
-            self.adjusted_effective_date, self.adjusted_maturity_date
-        )
-
-        # Calculate payment date
-        self.payment_date = SIFMA.next_biz_day(self.adjusted_maturity_date, 2)
-
-    def calculate_day_count_fraction(self, start_date, end_date):
-        delta = end_date - start_date
-        if self.day_count == 'ACT/360':
-            day_count_fraction = delta.days / 360
-        else:
-            raise ValueError("Unsupported day count convention")
-        return day_count_fraction
-
-    def get_fra_details(self):
-        """
-        Return a dictionary containing FRA details.
-        """
-        return {
-            'Effective Date': self.adjusted_effective_date,
-            'Maturity Date': self.adjusted_maturity_date,
-            'Payment Date': self.payment_date,
-            'Notional': self.notional,
-            'Fixed Rate': self.fixed_rate,
-            'Day Count Fraction': self.day_count_fraction
-        }
-
-
 if __name__ == '__main__':
     swap = SOFRSwap(
-        start_date='2024-01-31',  # Trade date
+        reference_date="2024-10-8",
+        start_date=None,  # Trade date
         tenor='5Y',
         day_count='ACT/360',  # Both legs use ACT/360
         business_day_convention='Modified Following',
