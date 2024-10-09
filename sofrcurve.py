@@ -196,16 +196,16 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
     knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
     fixing_values = jnp.array(fixings.values.squeeze())
 
-    prices_1m = jnp.zeros((len(futures_1m), ))
-    prices_3m = jnp.zeros((len(futures_3m), ))
+    px_1m = jnp.zeros((len(futures_1m), ))
+    px_3m = jnp.zeros((len(futures_3m), ))
     market_1m = jnp.array(futures_1m.values.squeeze())
     market_3m = jnp.array(futures_3m.values.squeeze())
 
     initial_values = jnp.array(curve.future_knot_values)
 
-    penalty_1m = 0.25 * jnp.ones_like(prices_1m)
+    penalty_1m = 0.25 * jnp.ones_like(px_1m)
     penalty_1m = penalty_1m.at[:4].set(0.75)
-    penalty_3m = jnp.ones_like(prices_3m)
+    penalty_3m = jnp.ones_like(px_3m)
     penalty_3m = penalty_3m.at[0].set(0.25)
     penalty_3m = penalty_3m.at[7:].set(0.5)
 
@@ -240,8 +240,8 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
     upper_bounds = jnp.ones_like(initial_values) * 0.1
     bounds = (lower_bounds, upper_bounds)
     res = lbfgsb.run(initial_values,
-                     prices_1m=prices_1m,
-                     prices_3m=prices_3m,
+                     prices_1m=px_1m,
+                     prices_3m=px_3m,
                      bounds=bounds).params
     curve.future_knot_values = np.array(res)
 
