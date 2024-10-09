@@ -1,19 +1,7 @@
 import datetime as dt
+from holiday import _SIFMA_
 
-
-def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
-    """
-    Generates FOMC meeting dates within the given date range.
-
-    Args:
-        start_date (datetime.date): The start date of the range.
-        end_date (datetime.date): The end date of the range.
-
-    Returns:
-        meetings (list of date): List of FOMC meeting dates (second day of each meeting).
-    """
-    # Actual FOMC meeting dates from 2019 to 2026
-    actual_meetings = [
+__FOMC_Meetings__ = [
         # 2019
         dt.datetime(2019, 1, 30),
         dt.datetime(2019, 3, 20),
@@ -86,55 +74,35 @@ def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
         dt.datetime(2026, 9, 16),
         dt.datetime(2026, 10, 28),
         dt.datetime(2026, 12, 9),
-    ]
+]
 
-    meetings = []
-
-    # Add actual meetings within the date range
-    for meeting_date in actual_meetings:
-        if start_date <= meeting_date <= end_date:
-            meetings.append(meeting_date)
-
-    # Generate estimated meetings outside the range of actual dates
-    if start_date.year < 2019 or end_date.year > 2026:
-        estimated_meetings = estimate_future_meeting_dates(start_date, end_date)
-        meetings.extend(estimated_meetings)
-
-    # Remove duplicates and sort the list
-    meetings = sorted(list(set(meetings)))
-
-    return meetings
-
-
-def estimate_future_meeting_dates(start_date, end_date):
+def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
     """
-    Estimates FOMC meeting dates using heuristics for years outside 2019-2026.
+    Generates FOMC meeting dates within the given date range.
 
     Args:
         start_date (datetime.date): The start date of the range.
         end_date (datetime.date): The end date of the range.
 
     Returns:
-        estimated_meetings (list of date): List of estimated meeting dates.
+        meetings (list of date): List of FOMC meeting dates (second day of each meeting).
     """
-    estimated_meetings = []
 
-    # Determine years that need estimation
-    years = set()
-    current_year = start_date.year
-    while current_year <= end_date.year:
-        if current_year < 2019 or current_year > 2026:
-            years.add(current_year)
-        current_year += 1
+    meetings = []
+    # Add actual meetings within the date range
+    for meeting_date in __FOMC_Meetings__:
+        if start_date <= meeting_date <= end_date:
+            meetings.append(meeting_date)
 
+    years = range(start_date.year, end_date.year + 1)
     for year in years:
-        # Estimate meetings for the year
-        meetings = estimate_meetings_for_year(year)
-        for meeting_date in meetings:
+        if 2019 <= year <= 2026:
+            continue
+        for meeting_date in estimate_meetings_for_year(year):
             if start_date <= meeting_date <= end_date:
-                estimated_meetings.append(meeting_date)
+                meetings.append(meeting_date)
+    return sorted(meetings)
 
-    return estimated_meetings
 
 def estimate_meetings_for_year(year):
     """
@@ -165,7 +133,8 @@ def estimate_meetings_for_year(year):
         days_ahead = (2 - target_date.weekday()) % 7
         # Adjust the date to the next Wednesday
         meeting_date = target_date + dt.timedelta(days=days_ahead)
-        # Combine date with a default time (midnight)
+        if not _SIFMA_.is_biz_day(meeting_date):
+            meeting_date -= dt.timedelta(days=7)
         meetings.append(meeting_date)
     return meetings
 
