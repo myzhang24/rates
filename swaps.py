@@ -7,24 +7,16 @@ import datetime as dt
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
-from holiday import SIFMA
-
-
-def fra_start_end_date(ref_date, short_hand) -> (dt.date, dt.date):
-    ref_date = pd.Timestamp(ref_date)
-    a, b = [int(x) for x in short_hand.split("x")]
-    unadj_start = ref_date + pd.DateOffset(months=a)
-    unadj_end = ref_date + pd.DateOffset(months=b)
-    return unadj_start.as_pydatetime(), unadj_end.as_pydatetime()
+from holiday import _SIFMA_
 
 
 def adjust_date(date, convention):
     if convention == 'Following':
-        adjusted_date = SIFMA.next_biz_day(date, 0)
+        adjusted_date = _SIFMA_.next_biz_day(date, 0)
     elif convention == 'Modified Following':
         adjusted_date = modified_following(date)
     elif convention == 'Preceding':
-        adjusted_date = SIFMA.prev_biz_day(date, 0)
+        adjusted_date = _SIFMA_.prev_biz_day(date, 0)
     elif convention == 'Modified Preceding':
         adjusted_date = modified_preceding(date)
     else:
