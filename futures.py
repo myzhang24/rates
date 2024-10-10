@@ -96,12 +96,13 @@ class SOFR3MFuture:
         self.reference_start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
         self.reference_end_date = next_imm_date(self.reference_start_date) - dt.timedelta(days=1)
 
-    def reference_array(self):
+    def reference_array(self, biz_only=True):
+        if not biz_only:
+            return convert_dates(pd.date_range(self.reference_start_date, self.reference_end_date, freq="1D"))
         dates = _SIFMA_.biz_date_range(self.reference_start_date, self.reference_end_date)
         if self.reference_start_date not in dates:
             dates = np.insert(dates, 0 , self.reference_start_date)
-        if self.reference_end_date not in dates:
-            dates = np.insert(dates, -1, self.reference_end_date)
+        dates = np.insert(dates, -1, self.reference_end_date + dt.timedelta(days=1))
         return convert_dates(dates)
 
 if __name__ == '__main__':

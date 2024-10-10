@@ -183,6 +183,19 @@ def price_3m_futures(curve: USDSOFRCurve, futures_3m: list) -> jnp.ndarray:
     logging.info(f"Priced {len(futures_3m)} 1m futures in {time.perf_counter() - st:.3f}s")
     return res
 
+def price_3m_futures_approx(curve: USDSOFRCurve, futures_3m: list) -> jnp.ndarray:
+    ref_periods = [jnp.array(SOFR3MFuture(x).reference_array(biz_only=False)) for x in futures_3m]
+    fixings = 1e-2 * _SOFR_.get_fixings(curve.reference_date - relativedelta(months=4), curve.reference_date)
+    fixing_dates = convert_dates(fixings.index)
+    knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
+    values = jnp.concatenate([fixings.values.squeeze(), curve.future_knot_values])
+
+    res = jnp.zeros((len(futures_3m),))
+    for i, ref_period in enumerate(ref_periods):
+        ref_rates = last_known_value(ref_period, knots, values)
+        rate = 360 * ((1 + ref_rates / 360).prod() - 1) / (ref_period[-1] - ref_period[0] + 1)
+        res = res.at[i].set(1e2 * (1 - rate))
+    return res
 
 def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_3m: pd.Series):
     st = time.perf_counter()
@@ -203,13 +216,7 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
 
     initial_values = jnp.array(curve.future_knot_values)
 
-    penalty_1m = 0.25 * jnp.ones_like(px_1m)
-    penalty_1m = penalty_1m.at[:4].set(0.75)
-    penalty_3m = jnp.ones_like(px_3m)
-    penalty_3m = penalty_3m.at[0].set(0.25)
-    penalty_3m = penalty_3m.at[7:].set(0.5)
-
-    # Write the objective function
+    @jit
     def futures_objective_function(knot_values, prices_1m, prices_3m):
         """
         Build the constant meeting daily forward futures curve
@@ -228,8 +235,8 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
             rate = ois_compound(ref_period, ref_rates)
             prices_3m = prices_3m.at[i].set(1e2 * (1 - rate))
 
-        score = jnp.sum(penalty_1m * (prices_1m - market_1m) ** 2)
-        score += jnp.sum(penalty_3m * (prices_3m - market_3m) ** 2)
+        score = jnp.sum((prices_1m - market_1m) ** 2)
+        score += jnp.sum((prices_3m - market_3m) ** 2)
         score += 1e2 * jnp.sum(jnp.diff(knot_values) ** 2)
         return score
 
@@ -237,7 +244,7 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
     lbfgsb = ScipyBoundedMinimize(fun=futures_objective_function,
                                   method="l-bfgs-b", jit=True)
     lower_bounds = jnp.zeros_like(initial_values)
-    upper_bounds = jnp.ones_like(initial_values) * 0.1
+    upper_bounds = jnp.ones_like(initial_values) * 0.08
     bounds = (lower_bounds, upper_bounds)
     res = lbfgsb.run(initial_values,
                      prices_1m=px_1m,
@@ -264,8 +271,8 @@ if __name__ == '__main__':
         "SERU25": 96.435,
     }, name="SOFR1M")
     sofr_3m_prices = pd.Series({
-        "SFRU24": 95.2050,
-        "SFRZ24": 95.68,
+        "SFRU24": 95.205,
+        "SFRZ24": 95.680,
         "SFRH25": 96.045,
         "SFRM25": 96.300,
         "SFRU25": 96.465,
@@ -291,10 +298,13 @@ if __name__ == '__main__':
 
     sofr = USDSOFRCurve("2024-10-09")
     calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices)
-    fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
-    print(1e2 * (fut_1m - sofr_1m_prices.values))
+    # fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
+    # print(1e2 * (fut_1m - sofr_1m_prices.values))
     fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
-    print(1e2 * (fut_3m - sofr_3m_prices.values))
-    sofr.plot_futures_daily_forwards(6)
-    print(sofr.future_knot_values)
+    fut_3m_approx = price_3m_futures_approx(sofr, sofr_3m_prices.index)
+    print(1e2 * (fut_3m - fut_3m_approx))
+
+
+    # sofr.plot_futures_daily_forwards(6)
+    # print(sofr.future_knot_values)
     exit(0)
