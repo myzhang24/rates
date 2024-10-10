@@ -14,10 +14,7 @@ from futures import SOFR1MFuture, SOFR3MFuture
 from fomc import generate_fomc_meeting_dates
 from scipy.interpolate import CubicSpline
 
-from jax import jit
-import jax.numpy as jnp
-
-
+from scipy.optimize import minimize, Bounds
 
 # USE SOFR curve class
 class USDSOFRCurve:
@@ -49,16 +46,15 @@ class USDSOFRCurve:
         self.future_knot_dates = convert_dates(knot_dates)
         self.future_knot_values = 0.05 * np.ones((len(knot_dates), ))
 
-    def initialize_swap_knots(self, swaps, policy="Termination Date"):
+    def initialize_swap_knots(self, swaps):
         """
         This function initializes the swap curve zero rate knots given by calibrating swap instruments
         :param swaps:
-        :param policy:
         :return:
         """
         # Initialize knots for swaps
         next_biz_day = _SIFMA_.next_biz_day(self.reference_date, 0)
-        knot_dates = [x.specs[policy] for x in swaps]
+        knot_dates = [SOFRSwap(self.reference_date, tenor=x).maturity_date for x in swaps]
         knot_dates = np.array([next_biz_day] + knot_dates)
         self.swap_knot_dates = convert_dates(knot_dates)
         self.swap_knot_values = 0.05 * np.ones((len(knot_dates), ))
@@ -106,8 +102,18 @@ class USDSOFRCurve:
     def calibrate_convexity(self):
         pass
 
+    def discount_factor(self, dates: np.array) -> np.array:
+        return df(dates, self.swap_knot_dates, self.swap_knot_values, convert_dates(self.reference_date))
 
 def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: float):
+    """
+    Hard to jit because of the interpolation.
+    :param dates:
+    :param knot_dates:
+    :param knot_values:
+    :param ref_date:
+    :return:
+    """
     zero_rates = interpolate(dates, knot_dates, knot_values)
     t_vect = (dates - ref_date) / 360
     return np.exp(-zero_rates * t_vect)
@@ -127,6 +133,8 @@ def interpolate(dates: np.array, knot_dates: np.array, knot_values: np.array) ->
     cs = CubicSpline(knot_dates, knot_values, extrapolate=False)
     # Interpolated values for the requested dates
     interpolated_values = cs(dates)
+    interpolated_values[dates <= knot_dates[0]] = knot_values[0]
+    interpolated_values[dates >= knot_dates[-1]] = knot_values[-1]
     return interpolated_values
 
 
@@ -147,7 +155,7 @@ def par_rate(ref_date: float, schedule: np.array, knot_dates: np.array, knot_val
     df_e  = df(ed, knot_dates, knot_values, ref_date)
     df_p = df(pay, knot_dates, knot_values, ref_date)
     fwd_rate = df_s / df_e - 1
-    numerator = np.sum(dcf * df_p * fwd_rate)
+    numerator = np.sum(df_p * fwd_rate)
     denominator = np.sum(dcf * df_p)
     return numerator / denominator
 
@@ -159,16 +167,43 @@ def spot_swap_rates(curve: USDSOFRCurve, swaps) -> np.array:
     :param swaps:
     :return:
     """
+    st = time.perf_counter()
     ref_date = convert_dates(curve.reference_date)
-    schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True) for x in swaps]
+    schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True).values for x in swaps]
     knot_dates = curve.swap_knot_dates
     knot_values = curve.swap_knot_values
+    rates = np.array(list(map(lambda schedule: par_rate(ref_date, schedule, knot_dates, knot_values), schedules)))
+    logging.info(f"Priced {len(swaps)} spot swaps in {time.perf_counter() - st:.3f}s")
+    return 1e2 * rates
 
-    # This is embarrassingly parallel, could we use dask bag here?
-    rates = np.zeros(len(swaps))
-    for i, schedule in enumerate(schedules):
-        rates[i] = par_rate(ref_date, schedule, knot_dates, knot_values)
-    return rates
+def calibrate_swap_curve(curve: USDSOFRCurve, swaps: pd.Series):
+    """
+    This function calibrates a swap curve's zero rate knots to prices swaps according to an input market
+    :param curve:
+    :param swaps:
+    :return:
+    """
+    st = time.perf_counter()
+    curve.initialize_swap_knots(swaps.index)
+    ref_date = convert_dates(curve.reference_date)
+    schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True).values for x in swaps.index]
+    mkt_prices = swaps.values.squeeze()
+    knot_dates = curve.swap_knot_dates
+    initial_values = 0.05 * np.ones_like(curve.swap_knot_values)
+
+    def loss_function(knot_values: np.array) -> float:
+        rates = 1e2 * np.array(list(map(lambda schedule: par_rate(ref_date, schedule, knot_dates, knot_values), schedules)))
+        loss = np.sum((rates - mkt_prices) ** 2)
+        loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+        return loss
+
+    bounds = Bounds(0.0, 0.08)
+    res = minimize(loss_function,
+                   initial_values,
+                   method="L-BFGS-B",
+                   bounds=bounds)
+    curve.swap_knot_values = res.x
+    logging.info(f"Calibrated swap curve in {time.perf_counter() - st:.3f}s")
 
 def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -> np.ndarray:
     """
@@ -259,33 +294,7 @@ def objective_function(knot_values: np.ndarray,
     loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
     return loss
 
-
-@jit
-def jax_objective_function(knot_values: jnp.ndarray,
-                           o_mat_1m: jnp.ndarray, fixing_1m: float, n_days_1m: jnp.ndarray, prices_1m: jnp.ndarray,
-                           o_mat_3m: jnp.ndarray, fixing_3m: float, n_days_3m: jnp.ndarray, prices_3m: jnp.ndarray):
-    # Price the 1m futures
-    rate_sum = jnp.dot(o_mat_1m, jnp.transpose(knot_values))
-    # rate_sum[0] += fixing_1m
-    rate_sum = rate_sum.at[0].set(rate_sum[0] + fixing_1m)
-    rate_avg_1m = rate_sum / n_days_1m
-    px_1m = 1e2 * (1 - rate_avg_1m)
-    loss = np.sum((px_1m - prices_1m) ** 2)
-
-    # Price the 3m futures
-    rate_prod = jnp.exp(jnp.dot(o_mat_3m, jnp.log(1 + jnp.transpose(knot_values) / 360)))
-    # rate_prod[0] *= fixing_3m
-    rate_prod = rate_prod.at[0].set(rate_prod[0] * fixing_3m)
-    rate_avg_3m = 360 * (rate_prod - 1) / n_days_3m
-    px_3m = 1e2 * (1 - rate_avg_3m)
-    loss += jnp.sum((px_3m - prices_3m) ** 2)
-
-    # Add a little curve constraint loss
-    loss += 1e2 * jnp.sum(jnp.diff(knot_values) ** 2)
-    return loss
-
-
-def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_3m: pd.Series, no_jit=True):
+def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_3m: pd.Series):
     st = time.perf_counter()
 
     # Initialize the FOMC meeting effective dates up till expiry of the last 3m future
@@ -319,28 +328,15 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
 
     # Initial values
     initial_knot_values = curve.future_knot_values
+    bounds = Bounds(0.0, 0.08)
+    res = minimize(objective_function,
+                   initial_knot_values,
+                   args=(o_matrix_1m, front_fixing_sum, n_days_1m, futures_1m.values.squeeze(),
+                         o_matrix_3m, front_fixing_prod, n_days_3m, futures_3m.values.squeeze()),
+                   method="L-BFGS-B",
+                   bounds=bounds)
+    curve.future_knot_values = res.x
 
-    if no_jit:
-        from scipy.optimize import minimize, Bounds
-        bounds = Bounds(0.0, 0.08)
-        res = minimize(objective_function,
-                       initial_knot_values,
-                       args=(o_matrix_1m, front_fixing_sum, n_days_1m, futures_1m.values.squeeze(),
-                             o_matrix_3m, front_fixing_prod, n_days_3m, futures_3m.values.squeeze()),
-                       method="L-BFGS-B",
-                       bounds=bounds)
-        curve.future_knot_values = res.x
-    else:
-        from jaxopt import ScipyBoundedMinimize
-        lbfgsb = ScipyBoundedMinimize(fun=jax_objective_function, method="l-bfgs-b")
-        lower_bounds = jnp.zeros_like(initial_knot_values)
-        upper_bounds = jnp.ones_like(initial_knot_values) * 0.08
-        bounds = (lower_bounds, upper_bounds)
-        lbfgsb_sol = lbfgsb.run(initial_knot_values, bounds=bounds,
-            o_mat_1m=o_matrix_1m, fixing_1m=front_fixing_sum, n_days_1m=n_days_1m, prices_1m=futures_1m.values.squeeze(),
-            o_mat_3m=o_matrix_3m, fixing_3m=front_fixing_prod, n_days_3m=n_days_3m, prices_3m=futures_3m.values.squeeze()
-                                ).params
-        curve.future_knot_values = np.array(lbfgsb_sol)
     logging.info(f"Finished futures curve calibration in {time.perf_counter()-st:.3f}s")
 
 
@@ -388,6 +384,7 @@ if __name__ == '__main__':
 
     sofr = USDSOFRCurve("2024-10-09")
     calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices)
+    calibrate_swap_curve(sofr, sofr_swaps_rates)
 
     fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
     print(1e2 * (fut_1m - sofr_1m_prices.values))
@@ -395,6 +392,9 @@ if __name__ == '__main__':
     fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
     print(1e2 * (fut_3m - sofr_3m_prices.values))
 
-    sofr.plot_futures_daily_forwards(6)
-    print(sofr.future_knot_values)
+    # sofr.plot_futures_daily_forwards(6)
+    # print(sofr.future_knot_values)
+
+    swap_rates = spot_swap_rates(sofr, sofr_swaps_rates.index)
+    print(1e2 * (swap_rates - sofr_swaps_rates.values))
     exit(0)

@@ -83,7 +83,9 @@ class SOFRSwap:
                 spot_date = _SIFMA_.next_biz_day(reference_date, 2)
                 num = int(self.start_date[:-1])
                 unit = self.start_date[-1].upper()
-                if unit == 'Y':
+                if unit == 'W':
+                    self.start_date = spot_date + relativedelta(weeks=num)
+                elif unit == 'Y':
                     self.start_date = spot_date + relativedelta(years=num)
                 elif unit == 'M':
                     self.start_date = spot_date + relativedelta(months=num)
@@ -102,7 +104,9 @@ class SOFRSwap:
             # In this case use tenor and start_date to calculate maturity date
             num = int(self.tenor[:-1])
             unit = self.tenor[-1].upper()
-            if unit == 'Y':
+            if unit == 'W':
+                self.maturity_date = self.start_date + relativedelta(weeks=num)
+            elif unit == 'Y':
                 self.maturity_date = self.start_date + relativedelta(years=num)
             elif unit == 'M':
                 self.maturity_date = self.start_date + relativedelta(months=num)

@@ -56,7 +56,7 @@ class SIFMACalendar(AbstractHolidayCalendar):
     def next_biz_day(self, d: dt.datetime | dt.date, shift=1) -> dt.datetime | dt.date:
         d += dt.timedelta(days=shift)
         while not self.is_biz_day(d):
-            d -= dt.timedelta(days=1)
+            d += dt.timedelta(days=1)
         return d
 
     def biz_date_range(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> pd.Series:
