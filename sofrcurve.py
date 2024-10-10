@@ -322,16 +322,14 @@ if __name__ == '__main__':
     })
 
     sofr = USDSOFRCurve("2024-10-09")
-    calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices, no_jit=False)
     calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices)
 
+    fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
+    print(1e2 * (fut_1m - sofr_1m_prices.values))
 
-    # fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
-    # print(1e2 * (fut_1m - sofr_1m_prices.values))
-    #
-    # fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
-    # print(1e2 * (fut_3m - sofr_3m_prices.values))
+    fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
+    print(1e2 * (fut_3m - sofr_3m_prices.values))
 
-    # sofr.plot_futures_daily_forwards(6)
-    # print(sofr.future_knot_values)
+    sofr.plot_futures_daily_forwards(6)
+    print(sofr.future_knot_values)
     exit(0)
