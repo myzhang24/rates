@@ -2,12 +2,14 @@
 This module generates the swap schedule for a USD SOFR OIS swap with market convention.
 Roll convention of End of Month and IMM are supported.
 """
-
-import datetime as dt
+import time
+import logging
+logging.basicConfig(level=logging.INFO)
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
 from holiday import _SIFMA_
+from utils import convert_dates
 
 
 def adjust_date(date, convention):
@@ -25,16 +27,16 @@ def adjust_date(date, convention):
 
 
 def modified_following(date):
-    candidate = SIFMA.next_biz_day(date, 0)
+    candidate = _SIFMA_.next_biz_day(date, 0)
     if candidate.month != date.month:
-        return SIFMA.prev_biz_day(date, 0)
+        return _SIFMA_.prev_biz_day(date, 0)
     return candidate
 
 
 def modified_preceding(date):
-    candidate = SIFMA.prev_biz_day(date, 0)
+    candidate = _SIFMA_.prev_biz_day(date, 0)
     if candidate.month != date.month:
-        return SIFMA.next_biz_day(date, 0)
+        return _SIFMA_.next_biz_day(date, 0)
     return candidate
 
 
@@ -65,10 +67,7 @@ class SOFRSwap:
         self.business_day_convention = business_day_convention
         self.roll_convention = roll_convention
         self.pay_delay = pay_delay
-
         self.calculate_start_end_date(reference_date)
-        self.fixed_leg_schedule = self.generate_leg_schedule(self.frequency_fixed)
-        self.float_leg_schedule = self.generate_leg_schedule(self.frequency_float)
 
 
     def calculate_start_end_date(self, reference_date):
@@ -81,7 +80,7 @@ class SOFRSwap:
                 # If start_date is a tenor string for forward starting swaps
                 # Need reference date as input
                 reference_date = pd.Timestamp(reference_date).to_pydatetime()
-                spot_date = SIFMA.next_biz_day(reference_date, 2)
+                spot_date = _SIFMA_.next_biz_day(reference_date, 2)
                 num = int(self.start_date[:-1])
                 unit = self.start_date[-1].upper()
                 if unit == 'Y':
@@ -92,7 +91,7 @@ class SOFRSwap:
                     raise ValueError("Unsupported tenor unit. Use 'Y' for years or 'M' for months.")
         else:
             reference_date = pd.Timestamp(reference_date).to_pydatetime()
-            self.start_date = SIFMA.next_biz_day(reference_date, 2)
+            self.start_date = _SIFMA_.next_biz_day(reference_date, 2)
 
         # Getting maturity date right
         try:
@@ -122,9 +121,16 @@ class SOFRSwap:
             self.maturity_date += MonthEnd(0)
             self.maturity_date = self.maturity_date.to_pydatetime()
 
-    def generate_leg_schedule(self, frequency):
-        schedule = []
+    def scheduler(self, frequency, convert_date=False):
+        """
+        This is the scheduler.
+        :param frequency:
+        :param convert_date:
+        :return:
+        """
+        # st = time.perf_counter()
 
+        schedule = []
         freq_num = int(frequency[:-1])
         freq_unit = frequency[-1].upper()
 
@@ -140,7 +146,7 @@ class SOFRSwap:
             accrual_end_date = adj_date_list[i + 1]
 
             # Calculate payment date with payment delay in SIFMA calendar
-            payment_date = SIFMA.next_biz_day(accrual_end_date, self.pay_delay)
+            payment_date = _SIFMA_.next_biz_day(accrual_end_date, self.pay_delay)
 
             # Calculate day count fraction
             dcf = self.calculate_day_count_fraction(accrual_start_date, accrual_end_date)
@@ -152,7 +158,14 @@ class SOFRSwap:
                 'Day Count Fraction': dcf
             })
 
-        return pd.DataFrame(schedule)
+        res = pd.DataFrame(schedule)
+        if convert_date:
+            res['Accrual Start Date'] = convert_dates(res['Accrual Start Date'])
+            res['Accrual End Date'] = convert_dates(res['Accrual End Date'])
+            res['Payment Date'] = convert_dates(res['Payment Date'])
+
+        # logging.info(f"Took {time.perf_counter() - st:.3f} seconds to generate swap leg schedule.")
+        return res
 
     def generate_unadjusted_dates(self, start_date, end_date, freq_num, freq_unit):
         # Generate dates from end date backward
@@ -191,17 +204,11 @@ class SOFRSwap:
             raise ValueError("Unsupported day count convention")
         return day_count_fraction
 
-    def get_fixed_leg_schedule(self):
-        return self.fixed_leg_schedule
+    def get_fixed_leg_schedule(self, convert_date=False):
+        return self.scheduler(self.frequency_fixed, convert_date=convert_date)
 
-    def get_float_leg_schedule(self):
-        return self.float_leg_schedule
-
-    def get_swap_schedule(self):
-        return {
-            'Fixed Leg': self.fixed_leg_schedule,
-            'Floating Leg': self.float_leg_schedule,
-        }
+    def get_float_leg_schedule(self, convert_date=False):
+        return self.scheduler(self.frequency_float, convert_date=convert_date)
 
 
 if __name__ == '__main__':
@@ -214,11 +221,6 @@ if __name__ == '__main__':
         roll_convention='End of Month',
     )
 
-    fixed_schedule = swap.get_fixed_leg_schedule()
-    float_schedule = swap.get_float_leg_schedule()
-
+    sch = swap.scheduler(swap.frequency_fixed, convert_date=True)
     print("Fixed Leg Schedule:")
-    print(fixed_schedule)
-
-    print("\nFloating Leg Schedule:")
-    print(float_schedule)
+    print(sch)

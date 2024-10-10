@@ -6,12 +6,16 @@ import pandas as pd
 # Use 1904 date format
 __base_date__ = dt.datetime(1904, 1, 1)
 
-def convert_dates(dates: pd.DatetimeIndex | np.ndarray | list) -> np.ndarray:
+def convert_dates(dates: pd.DatetimeIndex | np.ndarray | list):
     """
     Conversion of a list of datetime into 1904 int format
     :param dates:
     :return:
     """
+    # If it is a single date, return int
+    if isinstance(dates, dt.datetime) or isinstance(dates, dt.date):
+        return (dates - __base_date__).days
+
     # If it's a pandas DatetimeIndex, convert to an array of datetime
     if isinstance(dates, pd.DatetimeIndex):
         dates = dates.to_pydatetime()

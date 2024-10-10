@@ -12,6 +12,7 @@ from holiday import _SIFMA_
 from swaps import SOFRSwap
 from futures import SOFR1MFuture, SOFR3MFuture
 from fomc import generate_fomc_meeting_dates
+from scipy.interpolate import CubicSpline
 
 from jax import jit
 import jax.numpy as jnp
@@ -105,6 +106,69 @@ class USDSOFRCurve:
     def calibrate_convexity(self):
         pass
 
+
+def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: float):
+    zero_rates = interpolate(dates, knot_dates, knot_values)
+    t_vect = (dates - ref_date) / 360
+    return np.exp(-zero_rates * t_vect)
+
+
+def interpolate(dates: np.array, knot_dates: np.array, knot_values: np.array) -> np.array:
+    """
+    This is an interpolator. The base knots and values are given by knot_dates and knot_values.
+    The values being queried (interpolated) are from dates.
+    We want to use cubic spline interpolation, and flat extrapolation for dates beyond knot_dates.
+    :param dates:
+    :param knot_dates:
+    :param knot_values:
+    :return:
+    """
+    # Create cubic spline interpolator
+    cs = CubicSpline(knot_dates, knot_values, extrapolate=False)
+    # Interpolated values for the requested dates
+    interpolated_values = cs(dates)
+    return interpolated_values
+
+
+def par_rate(ref_date: float, schedule: np.array, knot_dates: np.array, knot_values: np.array):
+    """
+    This function prices a single swap's par rate based on its schedule.
+    :param ref_date:
+    :param schedule:
+    :param knot_dates:
+    :param knot_values:
+    :return:
+    """
+    sd = schedule[:, 0]
+    ed = schedule[:, 1]
+    pay = schedule[:, 2]
+    dcf = schedule[:, 3]
+    df_s = df(sd, knot_dates, knot_values, ref_date)
+    df_e  = df(ed, knot_dates, knot_values, ref_date)
+    df_p = df(pay, knot_dates, knot_values, ref_date)
+    fwd_rate = df_s / df_e - 1
+    numerator = np.sum(dcf * df_p * fwd_rate)
+    denominator = np.sum(dcf * df_p)
+    return numerator / denominator
+
+
+def spot_swap_rates(curve: USDSOFRCurve, swaps) -> np.array:
+    """
+    This function prices a list of spot starting swaps on a curve.
+    :param curve:
+    :param swaps:
+    :return:
+    """
+    ref_date = convert_dates(curve.reference_date)
+    schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True) for x in swaps]
+    knot_dates = curve.swap_knot_dates
+    knot_values = curve.swap_knot_values
+
+    # This is embarrassingly parallel, could we use dask bag here?
+    rates = np.zeros(len(swaps))
+    for i, schedule in enumerate(schedules):
+        rates[i] = par_rate(ref_date, schedule, knot_dates, knot_values)
+    return rates
 
 def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -> np.ndarray:
     """
@@ -278,6 +342,7 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
                                 ).params
         curve.future_knot_values = np.array(lbfgsb_sol)
     logging.info(f"Finished futures curve calibration in {time.perf_counter()-st:.3f}s")
+
 
 # Example usage
 if __name__ == '__main__':
