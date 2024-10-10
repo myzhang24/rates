@@ -6,10 +6,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 import time
 
-from jax import jit
-import jax.numpy as jnp
-from jaxopt import ScipyBoundedMinimize
-
 from utils import convert_dates, parse_dates
 from fixings import _SOFR_
 from holiday import _SIFMA_
@@ -17,37 +13,9 @@ from swaps import SOFRSwap
 from futures import SOFR1MFuture, SOFR3MFuture
 from fomc import generate_fomc_meeting_dates
 
+from jax import jit
+import jax.numpy as jnp
 
-
-
-# Some Jax pricing routines
-@jit
-def last_known_value(reference_dates: jnp.ndarray,
-                         knot_dates: jnp.ndarray,
-                         knot_values: jnp.ndarray) -> jnp.ndarray:
-    """
-    This function looks up reference_values for reference_dates according to knot_dates, knot_values
-    :param reference_dates:
-    :param knot_dates:
-    :param knot_values:
-    :return:
-    """
-    indices = jnp.searchsorted(knot_dates, reference_dates, side='right') - 1
-    indices = jnp.clip(indices, 0, len(knot_values) - 1)
-    return knot_values[indices]
-
-@jit
-def ois_compound(reference_dates: jnp.ndarray, reference_rates: jnp.ndarray):
-    """
-    This function computes the compounded SOFR rate given the fixings
-    :param reference_dates:
-    :param reference_rates:
-    :return:
-    """
-    num_days = jnp.diff(reference_dates)
-    rates = reference_rates[:-1]
-    annualized_rate = jnp.prod(1 + rates * num_days / 360) - 1
-    return 360 * annualized_rate / num_days.sum()
 
 
 # USE SOFR curve class
@@ -138,7 +106,21 @@ class USDSOFRCurve:
         pass
 
 
-def price_1m_futures(curve: USDSOFRCurve, futures_1m: list) -> jnp.ndarray:
+def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -> np.ndarray:
+    """
+    This function creates overlap matrix, how many calendar days is each future exposed to each meeting-to-meeting period
+    :param start_end_dates:
+    :param knot_dates:
+    :return:
+    """
+    knot_ends = np.roll(knot_dates, -1) - 1
+    knot_ends[-1] = 1_000_000
+    starts = np.maximum(start_end_dates[:, 0].reshape(-1, 1), knot_dates.reshape(1, -1))
+    ends = np.minimum(start_end_dates[:, 1].reshape(-1, 1), knot_ends.reshape(1, -1))
+    return np.maximum(0, ends - starts + 1)
+
+
+def price_1m_futures(curve: USDSOFRCurve, futures_1m: list) -> np.ndarray:
     """
     This function values a list of futures_1m (tickers) on a given curve
     :param curve:
@@ -146,112 +128,155 @@ def price_1m_futures(curve: USDSOFRCurve, futures_1m: list) -> jnp.ndarray:
     :return:
     """
     st = time.perf_counter()
-    ref_periods = [jnp.array(SOFR1MFuture(x).reference_array()) for x in futures_1m]
-    fixings = 1e-2 * _SOFR_.get_fixings(curve.reference_date - relativedelta(months=1), curve.reference_date)
-    fixing_dates = convert_dates(fixings.index)
-    knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
-    values = jnp.concatenate([fixings.values.squeeze(), curve.future_knot_values])
+    fut_start_end = np.array([convert_dates(SOFR1MFuture(x).get_reference_start_end_dates()) for x in futures_1m])
 
-    res = jnp.zeros((len(futures_1m), ))
-    for i, ref_period in enumerate(ref_periods):
-        ref_rates = last_known_value(ref_period, knots, values)
-        rate = ref_rates.mean()
-        res = res.at[i].set(jnp.round(1e2 * (1 - rate), 3))
+    front_fixing = 0
+    front_future = SOFR1MFuture(futures_1m[0])
+    if front_future.reference_start_date < curve.reference_date:
+        fixings = 1e-2 * _SOFR_.get_fixings_asof(front_future.reference_start_date, curve.reference_date - dt.timedelta(days=1))
+        front_fixing = fixings.sum()
+
+    o_matrix = create_overlap_matrix(fut_start_end, curve.future_knot_dates)
+    knot_values = curve.future_knot_values
+
+    rate_sum = np.matmul(o_matrix, knot_values.reshape(-1, 1)).squeeze()
+    rate_sum[0] += front_fixing
+
+    rate_avg = rate_sum / (np.diff(fut_start_end, axis=1) + 1).squeeze()
     logging.info(f"Priced {len(futures_1m)} 1m futures in {time.perf_counter()-st:.3f}s")
-    return res
+    return 1e2 * (1 - rate_avg)
 
 
-def price_3m_futures(curve: USDSOFRCurve, futures_3m: list) -> jnp.ndarray:
+def price_3m_futures(curve: USDSOFRCurve, futures_3m: list) -> np.ndarray:
     """
-    This function values a list of futures_1m (tickers) on a given curve
+    This function values a list of futures_3m (tickers) on a given curve
     :param curve:
     :param futures_3m:
     :return:
     """
     st = time.perf_counter()
-    ref_periods = [jnp.array(SOFR3MFuture(x).reference_array()) for x in futures_3m]
-    fixings = 1e-2 * _SOFR_.get_fixings(curve.reference_date - relativedelta(months=4), curve.reference_date)
-    fixing_dates = convert_dates(fixings.index)
-    knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
-    values = jnp.concatenate([fixings.values.squeeze(), curve.future_knot_values])
+    fut_start_end = np.array([convert_dates(SOFR3MFuture(x).get_reference_start_end_dates()) for x in futures_3m])
 
-    res = jnp.zeros((len(futures_3m), ))
-    for i, ref_period in enumerate(ref_periods):
-        ref_rates = last_known_value(ref_period, knots, values)
-        rate = ois_compound(ref_period, ref_rates)
-        res = res.at[i].set(1e2 * (1 - rate))
-    logging.info(f"Priced {len(futures_3m)} 1m futures in {time.perf_counter() - st:.3f}s")
-    return res
+    front_fixing = 1
+    front_future = SOFR3MFuture(futures_3m[0])
+    if front_future.reference_start_date < curve.reference_date:
+        fixings = 1e-2 * _SOFR_.get_fixings_asof(front_future.reference_start_date, curve.reference_date - dt.timedelta(days=1))
+        front_fixing = (1 + fixings / 360).prod()
 
-def price_3m_futures_approx(curve: USDSOFRCurve, futures_3m: list) -> jnp.ndarray:
-    ref_periods = [jnp.array(SOFR3MFuture(x).reference_array(biz_only=False)) for x in futures_3m]
-    fixings = 1e-2 * _SOFR_.get_fixings(curve.reference_date - relativedelta(months=4), curve.reference_date)
-    fixing_dates = convert_dates(fixings.index)
-    knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
-    values = jnp.concatenate([fixings.values.squeeze(), curve.future_knot_values])
+    o_matrix = create_overlap_matrix(fut_start_end, curve.future_knot_dates)
+    knot_values = curve.future_knot_values
 
-    res = jnp.zeros((len(futures_3m),))
-    for i, ref_period in enumerate(ref_periods):
-        ref_rates = last_known_value(ref_period, knots, values)
-        rate = 360 * ((1 + ref_rates / 360).prod() - 1) / (ref_period[-1] - ref_period[0] + 1)
-        res = res.at[i].set(1e2 * (1 - rate))
-    return res
+    rate_prod = np.exp(np.matmul(o_matrix, np.log(1 + knot_values.reshape(-1, 1) / 360)).squeeze())
+    rate_prod[0] *= front_fixing
 
-def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_3m: pd.Series):
+    rate_avg = 360 * (rate_prod - 1) / (np.diff(fut_start_end, axis=1) + 1).squeeze()
+    logging.info(f"Priced {len(futures_3m)} 1m futures in {time.perf_counter()-st:.3f}s")
+    return 1e2 * (1 - rate_avg)
+
+
+def objective_function(knot_values: np.ndarray,
+                       o_mat_1m: np.ndarray, fixing_1m: float, n_days_1m: np.ndarray, prices_1m: np.ndarray,
+                       o_mat_3m: np.ndarray, fixing_3m: float, n_days_3m: np.ndarray, prices_3m: np.ndarray):
+    # Price the 1m futures
+    rate_sum = o_mat_1m @ knot_values.transpose()
+    rate_sum[0] += fixing_1m
+    rate_avg_1m = rate_sum / n_days_1m
+    px_1m = 1e2 * (1 - rate_avg_1m)
+    loss = np.sum((px_1m - prices_1m) ** 2)
+
+    # Price the 3m futures
+    rate_prod = np.exp(o_mat_3m @ np.log(1 + knot_values.transpose() / 360))
+    rate_prod[0] *= fixing_3m
+    rate_avg_3m = 360 * (rate_prod - 1) / n_days_3m
+    px_3m = 1e2 * (1 - rate_avg_3m)
+    loss += np.sum((px_3m - prices_3m) ** 2)
+
+    # Add a little curve constraint loss
+    loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+    return loss
+
+
+@jit
+def jax_objective_function(knot_values: jnp.ndarray,
+                           o_mat_1m: jnp.ndarray, fixing_1m: float, n_days_1m: jnp.ndarray, prices_1m: jnp.ndarray,
+                           o_mat_3m: jnp.ndarray, fixing_3m: float, n_days_3m: jnp.ndarray, prices_3m: jnp.ndarray):
+    # Price the 1m futures
+    rate_sum = jnp.dot(o_mat_1m, jnp.transpose(knot_values))
+    # rate_sum[0] += fixing_1m
+    rate_sum = rate_sum.at[0].set(rate_sum[0] + fixing_1m)
+    rate_avg_1m = rate_sum / n_days_1m
+    px_1m = 1e2 * (1 - rate_avg_1m)
+    loss = np.sum((px_1m - prices_1m) ** 2)
+
+    # Price the 3m futures
+    rate_prod = jnp.exp(jnp.dot(o_mat_3m, jnp.log(1 + jnp.transpose(knot_values) / 360)))
+    # rate_prod[0] *= fixing_3m
+    rate_prod = rate_prod.at[0].set(rate_prod[0] * fixing_3m)
+    rate_avg_3m = 360 * (rate_prod - 1) / n_days_3m
+    px_3m = 1e2 * (1 - rate_avg_3m)
+    loss += jnp.sum((px_3m - prices_3m) ** 2)
+
+    # Add a little curve constraint loss
+    loss += 1e2 * jnp.sum(jnp.diff(knot_values) ** 2)
+    return loss
+
+
+def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_3m: pd.Series, no_jit=True):
     st = time.perf_counter()
 
-    ref_periods_1m = [jnp.array(SOFR1MFuture(x).reference_array()) for x in futures_1m.index]
-    ref_periods_3m = [jnp.array(SOFR3MFuture(x).reference_array()) for x in futures_3m.index]
-    curve.initialize_future_knots(SOFR3MFuture(futures_3m.index[-1]).reference_end_date)
+    # Initialize the FOMC meeting effective dates up till expiry of the last 3m future
+    last_future = SOFR3MFuture(futures_3m.index[-1])
+    curve.initialize_future_knots(last_future.reference_end_date)
 
-    fixings = 1e-2 * _SOFR_.get_fixings(curve.reference_date - relativedelta(months=4), curve.reference_date)
-    fixing_dates = convert_dates(fixings.index)
-    knots = jnp.concatenate([fixing_dates, curve.future_knot_dates])
-    fixing_values = jnp.array(fixings.values.squeeze())
+    # Obtain the start and end dates of the 1m and 3m futures
+    fut_start_end_1m = np.array([convert_dates(SOFR1MFuture(x).get_reference_start_end_dates()) for x in futures_1m.index])
+    n_days_1m = (np.diff(fut_start_end_1m, axis=1) + 1).squeeze()
+    fut_start_end_3m = np.array([convert_dates(SOFR3MFuture(x).get_reference_start_end_dates()) for x in futures_3m.index])
+    n_days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).squeeze()
 
-    px_1m = jnp.zeros((len(futures_1m), ))
-    px_3m = jnp.zeros((len(futures_3m), ))
-    market_1m = jnp.array(futures_1m.values.squeeze())
-    market_3m = jnp.array(futures_3m.values.squeeze())
+    # Take the front 1m future stub sum as well as the front 3m future stub prod
+    front_fixing_sum = 0.0
+    front_future_1m = SOFR1MFuture(futures_1m.index[0])
+    if front_future_1m.reference_start_date < curve.reference_date:
+        fixings = 1e-2 * _SOFR_.get_fixings_asof(front_future_1m.reference_start_date,
+                                                 curve.reference_date - dt.timedelta(days=1))
+        front_fixing_sum = fixings.sum()
 
-    initial_values = jnp.array(curve.future_knot_values)
+    front_fixing_prod = 1.0
+    front_future_3m = SOFR3MFuture(futures_3m.index[0])
+    if front_future_3m.reference_start_date < curve.reference_date:
+        fixings = 1e-2 * _SOFR_.get_fixings_asof(front_future_3m.reference_start_date,
+                                                 curve.reference_date - dt.timedelta(days=1))
+        front_fixing_prod = (1 + fixings / 360).prod()
 
-    @jit
-    def futures_objective_function(knot_values, prices_1m, prices_3m):
-        """
-        Build the constant meeting daily forward futures curve
-        :return:
-        """
-        values = jnp.concatenate([fixing_values, knot_values])
+    # Create the overlap matrices for 1m and 3m futures for knot periods
+    o_matrix_1m = create_overlap_matrix(fut_start_end_1m, curve.future_knot_dates).astype(float)
+    o_matrix_3m = create_overlap_matrix(fut_start_end_3m, curve.future_knot_dates).astype(float)
 
-        for i in range(prices_1m.shape[0]):
-            ref_period = ref_periods_1m[i]
-            ref_rates = last_known_value(ref_period, knots, values)
-            prices_1m = prices_1m.at[i].set(1e2 * (1 - ref_rates.mean()))
+    # Initial values
+    initial_knot_values = curve.future_knot_values
 
-        for i in range(prices_3m.shape[0]):
-            ref_period = ref_periods_3m[i]
-            ref_rates = last_known_value(ref_period, knots, values)
-            rate = ois_compound(ref_period, ref_rates)
-            prices_3m = prices_3m.at[i].set(1e2 * (1 - rate))
-
-        score = jnp.sum((prices_1m - market_1m) ** 2)
-        score += jnp.sum((prices_3m - market_3m) ** 2)
-        score += 1e2 * jnp.sum(jnp.diff(knot_values) ** 2)
-        return score
-
-    # Use jax lbfgsb to minimize with jit and autodiff
-    lbfgsb = ScipyBoundedMinimize(fun=futures_objective_function,
-                                  method="l-bfgs-b", jit=True)
-    lower_bounds = jnp.zeros_like(initial_values)
-    upper_bounds = jnp.ones_like(initial_values) * 0.08
-    bounds = (lower_bounds, upper_bounds)
-    res = lbfgsb.run(initial_values,
-                     prices_1m=px_1m,
-                     prices_3m=px_3m,
-                     bounds=bounds).params
-    curve.future_knot_values = np.array(res)
-
+    if no_jit:
+        from scipy.optimize import minimize, Bounds
+        bounds = Bounds(0.0, 0.08)
+        res = minimize(objective_function,
+                       initial_knot_values,
+                       args=(o_matrix_1m, front_fixing_sum, n_days_1m, futures_1m.values.squeeze(),
+                             o_matrix_3m, front_fixing_prod, n_days_3m, futures_3m.values.squeeze()),
+                       method="L-BFGS-B",
+                       bounds=bounds)
+        curve.future_knot_values = res.x
+    else:
+        from jaxopt import ScipyBoundedMinimize
+        lbfgsb = ScipyBoundedMinimize(fun=jax_objective_function, method="l-bfgs-b")
+        lower_bounds = jnp.zeros_like(initial_knot_values)
+        upper_bounds = jnp.ones_like(initial_knot_values) * 0.08
+        bounds = (lower_bounds, upper_bounds)
+        lbfgsb_sol = lbfgsb.run(initial_knot_values, bounds=bounds,
+            o_mat_1m=o_matrix_1m, fixing_1m=front_fixing_sum, n_days_1m=n_days_1m, prices_1m=futures_1m.values.squeeze(),
+            o_mat_3m=o_matrix_3m, fixing_3m=front_fixing_prod, n_days_3m=n_days_3m, prices_3m=futures_3m.values.squeeze()
+                                ).params
+        curve.future_knot_values = np.array(lbfgsb_sol)
     logging.info(f"Finished futures curve calibration in {time.perf_counter()-st:.3f}s")
 
 # Example usage
@@ -297,13 +322,15 @@ if __name__ == '__main__':
     })
 
     sofr = USDSOFRCurve("2024-10-09")
+    calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices, no_jit=False)
     calibrate_futures_curve(sofr, sofr_1m_prices, sofr_3m_prices)
+
+
     # fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
     # print(1e2 * (fut_1m - sofr_1m_prices.values))
-    fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
-    fut_3m_approx = price_3m_futures_approx(sofr, sofr_3m_prices.index)
-    print(1e2 * (fut_3m - fut_3m_approx))
-
+    #
+    # fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
+    # print(1e2 * (fut_3m - sofr_3m_prices.values))
 
     # sofr.plot_futures_daily_forwards(6)
     # print(sofr.future_knot_values)

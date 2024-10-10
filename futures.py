@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 
-from holiday import _SIFMA_
 from utils import convert_dates, get_nth_weekday_of_month, next_imm_date
 
 
@@ -52,12 +51,8 @@ class SOFR1MFuture:
         self.reference_start_date = dt.datetime(year, month, 1)
         self.reference_end_date = (self.reference_start_date + MonthEnd(0)).to_pydatetime()
 
-    def reference_array(self):
-        """
-        Returns a reference array of SOFR reference days, first of month to end of month calendar days inclusive
-        :return:
-        """
-        return convert_dates(pd.date_range(self.reference_start_date, self.reference_end_date, freq="1D"))
+    def get_reference_start_end_dates(self):
+        return [self.reference_start_date, self.reference_end_date]
 
 
 class SOFR3MFuture:
@@ -96,14 +91,8 @@ class SOFR3MFuture:
         self.reference_start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
         self.reference_end_date = next_imm_date(self.reference_start_date) - dt.timedelta(days=1)
 
-    def reference_array(self, biz_only=True):
-        if not biz_only:
-            return convert_dates(pd.date_range(self.reference_start_date, self.reference_end_date, freq="1D"))
-        dates = _SIFMA_.biz_date_range(self.reference_start_date, self.reference_end_date)
-        if self.reference_start_date not in dates:
-            dates = np.insert(dates, 0 , self.reference_start_date)
-        dates = np.insert(dates, -1, self.reference_end_date + dt.timedelta(days=1))
-        return convert_dates(dates)
+    def get_reference_start_end_dates(self):
+        return [self.reference_start_date, self.reference_end_date]
 
 if __name__ == '__main__':
     # Example for SOFR 1M Futures
@@ -112,7 +101,6 @@ if __name__ == '__main__':
     print(f"Ticker: {sofr1m.ticker}")
     print(f"Reference Start Date: {sofr1m.reference_start_date.date()}")
     print(f"Reference End Date: {sofr1m.reference_end_date.date()}")
-    print(f"Reference Dates: {sofr1m.reference_array()}")
 
 
     # Example for SOFR 3M Futures
@@ -121,4 +109,3 @@ if __name__ == '__main__':
     print(f"Ticker: {sofr3m.ticker}")
     print(f"Reference Start Date: {sofr3m.reference_start_date.date()}")
     print(f"Reference End Date: {sofr3m.reference_end_date.date()}")
-    print(f"Reference Dates: {sofr3m.reference_array()}")

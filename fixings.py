@@ -26,6 +26,13 @@ class FixingManager:
             self.load_fixings()
         return __fixing_cache__[st: et]
 
+    def get_fixings_asof(self, st: dt.datetime, et: dt.datetime):
+        if __fixing_cache__ is None:
+            self.load_fixings()
+        dates = pd.date_range(st, et, freq='D')
+        res = pd.DataFrame(index=dates)
+        return pd.merge_asof(res, __fixing_cache__, left_index=True, right_index=True).squeeze()
+
 _SOFR_ = FixingManager()
 
 if __name__ == '__main__':
