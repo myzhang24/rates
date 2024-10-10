@@ -12,7 +12,6 @@ from holiday import _SIFMA_
 from swaps import SOFRSwap
 from futures import SOFR1MFuture, SOFR3MFuture
 from fomc import generate_fomc_meeting_dates
-from scipy.interpolate import CubicSpline
 
 from scipy.optimize import minimize, Bounds
 
@@ -105,6 +104,7 @@ class USDSOFRCurve:
     def discount_factor(self, dates: np.array) -> np.array:
         return df(dates, self.swap_knot_dates, self.swap_knot_values, convert_dates(self.reference_date))
 
+
 def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: float):
     """
     Hard to jit because of the interpolation.
@@ -114,28 +114,9 @@ def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: f
     :param ref_date:
     :return:
     """
-    zero_rates = interpolate(dates, knot_dates, knot_values)
+    zero_rates = np.interp(dates, knot_dates, knot_values)
     t_vect = (dates - ref_date) / 360
     return np.exp(-zero_rates * t_vect)
-
-
-def interpolate(dates: np.array, knot_dates: np.array, knot_values: np.array) -> np.array:
-    """
-    This is an interpolator. The base knots and values are given by knot_dates and knot_values.
-    The values being queried (interpolated) are from dates.
-    We want to use cubic spline interpolation, and flat extrapolation for dates beyond knot_dates.
-    :param dates:
-    :param knot_dates:
-    :param knot_values:
-    :return:
-    """
-    # Create cubic spline interpolator
-    cs = CubicSpline(knot_dates, knot_values, extrapolate=False)
-    # Interpolated values for the requested dates
-    interpolated_values = cs(dates)
-    interpolated_values[dates <= knot_dates[0]] = knot_values[0]
-    interpolated_values[dates >= knot_dates[-1]] = knot_values[-1]
-    return interpolated_values
 
 
 def par_rate(ref_date: float, schedule: np.array, knot_dates: np.array, knot_values: np.array):
