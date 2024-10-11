@@ -117,7 +117,6 @@ class USDSOFRCurve:
     def calibrate_convexity(self):
         pass
 
-
 def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: float):
     """
     Hard to jit because of the interpolation.
@@ -131,31 +130,8 @@ def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: f
     zero_rates = cs(dates)
     zero_rates[dates < knot_dates[0]] = knot_values[0]
     zero_rates[dates > knot_dates[-1]] = knot_values[-1]
-    # zero_rates = np.interp(dates, knot_dates, knot_values)
     t_vect = (dates - ref_date) / 360
     return np.exp(-zero_rates * t_vect)
-
-
-def par_rate(ref_date: float, schedule: np.array, knot_dates: np.array, knot_values: np.array):
-    """
-    This function prices a single swap's par rate based on its schedule.
-    :param ref_date:
-    :param schedule:
-    :param knot_dates:
-    :param knot_values:
-    :return:
-    """
-    sd = schedule[:, 0]
-    ed = schedule[:, 1]
-    pay = schedule[:, 2]
-    dcf = schedule[:, 3]
-    df_s = df(sd, knot_dates, knot_values, ref_date)
-    df_e  = df(ed, knot_dates, knot_values, ref_date)
-    df_p = df(pay, knot_dates, knot_values, ref_date)
-    fwd_rate = df_s / df_e - 1
-    numerator = np.sum(df_p * fwd_rate)
-    denominator = np.sum(dcf * df_p)
-    return numerator / denominator
 
 def price_swap_rates(curve: USDSOFRCurve, swaps: list) -> np.array:
     """
@@ -167,15 +143,30 @@ def price_swap_rates(curve: USDSOFRCurve, swaps: list) -> np.array:
     st = time.perf_counter()
     ref_date = convert_dates(curve.reference_date)
     schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
+    partition = np.array([len(x) for x in schedules])
+    schedule_block = np.concatenate(schedules, axis=0)
+
     knot_dates = curve.swap_knot_dates
     knot_values = curve.swap_knot_values
-    rates = np.array(list(map(lambda schedule: par_rate(ref_date, schedule, knot_dates, knot_values), schedules)))
+    dfs = df(schedule_block[:, :3], knot_dates, knot_values, ref_date)
+    fwds = (dfs[:, 0] / dfs[:, 1] - 1)
+    numerators = fwds * dfs[:, 2]  # fwd_i * df_i
+    numerators = sum_partitions(numerators, partition)
+    denominators = schedule_block[:, -1] * dfs[:, 2]  # dcf_i * df_i
+    denominators = sum_partitions(denominators, partition)
+    rates = 1e2 * numerators / denominators
     logging.info(f"Priced {len(swaps)} spot swaps in {time.perf_counter() - st:.3f}s")
-    return 1e2 * rates
+    return rates
 
 def spot_swap_rates(curve: USDSOFRCurve, swaps_list) -> np.array:
     swaps = [SOFRSwap(curve.reference_date, tenor=tenor) for tenor in swaps_list]
     return price_swap_rates(curve, swaps)
+
+
+def sum_partitions(arr, part):
+    indices = np.r_[0, np.cumsum(part)[:-1]]
+    result = np.add.reduceat(arr, indices)
+    return result
 
 def calibrate_swap_curve(curve: USDSOFRCurve, swaps: pd.Series):
     """
@@ -187,13 +178,24 @@ def calibrate_swap_curve(curve: USDSOFRCurve, swaps: pd.Series):
     st = time.perf_counter()
     curve.initialize_swap_knots(swaps.index)
     ref_date = convert_dates(curve.reference_date)
+
+    # Now we generate and merge the schedule array into a huge one with partition recorded.
     schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True).values for x in swaps.index]
+    partition = np.array([len(x) for x in schedules])
+    schedule_block  = np.concatenate(schedules, axis=0)
+
     mkt_prices = swaps.values.squeeze()
     knot_dates = curve.swap_knot_dates
     initial_values = 0.05 * np.ones_like(curve.swap_knot_values)
 
     def loss_function(knot_values: np.array) -> float:
-        rates = 1e2 * np.array(list(map(lambda schedule: par_rate(ref_date, schedule, knot_dates, knot_values), schedules)))
+        dfs = df(schedule_block[:, :3], knot_dates, knot_values, ref_date)
+        fwds = (dfs[:, 0] / dfs[:, 1] - 1)
+        numerators = fwds * dfs[:, 2]   # fwd_i * df_i
+        numerators = sum_partitions(numerators, partition)
+        denominators = schedule_block[:, -1] * dfs[:, 2] # dcf_i * df_i
+        denominators = sum_partitions(denominators, partition)
+        rates = 1e2 * numerators / denominators
         loss = np.sum((rates - mkt_prices) ** 2)
         loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
         return loss
@@ -392,26 +394,26 @@ if __name__ == '__main__':
     }, name="SOFR3M")
     sofr_swaps_rates = pd.Series({
         "1W": 4.8400,
-        # "2W": 4.84318,
-        # "3W": 4.8455,
+        "2W": 4.84318,
+        "3W": 4.8455,
         "1M": 4.8249,
         "2M": 4.7530,
         "3M": 4.6709,
-        # "4M": 4.6020,
-        # "5M": 4.5405,
+        "4M": 4.6020,
+        "5M": 4.5405,
         "6M": 4.4717,
-        # "7M": 4.41422,
-        # "8M": 4.35880,
+        "7M": 4.41422,
+        "8M": 4.35880,
         "9M": 4.3061,
-        # "10M": 4.2563,
-        # "11M": 4.2110,
+        "10M": 4.2563,
+        "11M": 4.2110,
         "12M": 4.16675,
         "18M": 3.9378,
         "2Y": 3.81955,
         "3Y": 3.6866,
-        # "4Y": 3.61725,
+        "4Y": 3.61725,
         "5Y": 3.5842,
-        # "6Y": 3.5735,
+        "6Y": 3.5735,
         "7Y": 3.5719,
         "10Y": 3.5972,
         "15Y": 3.6590,
@@ -441,5 +443,4 @@ if __name__ == '__main__':
 
     sofr.plot_futures_daily_forwards(6)
     sofr.plot_swap_zero_rate()
-
     exit(0)
