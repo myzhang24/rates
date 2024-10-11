@@ -345,7 +345,7 @@ def compute_convexity(curve: USDSOFRCurve, futures_3m):
     fut_start_end_dates = [SOFR3MFuture(x).get_reference_start_end_dates() for x in futures_3m]
     for st_et in fut_start_end_dates:
         st_et[1] += dt.timedelta(1)
-    swaps = [SOFRSwap(start_date=x, maturity_date=y) for x, y in fut_start_end_dates]
+    swaps = [SOFRSwap(start_date=x, maturity_date=y, pay_delay=0) for x, y in fut_start_end_dates]
     swap_rates = price_swap_rates(curve, swaps)
     return swap_rates - future_rates
 
@@ -386,19 +386,26 @@ if __name__ == '__main__':
     }, name="SOFR3M")
     sofr_swaps_rates = pd.Series({
         "1W": 4.8400,
-        "2W": 4.8318,
+        "2W": 4.84318,
         "3W": 4.8455,
         "1M": 4.8249,
         "2M": 4.7530,
         "3M": 4.6709,
+        "4M": 4.6020,
+        "5M": 4.5405,
         "6M": 4.4717,
+        "7M": 4.41422,
+        "8M": 4.35880,
         "9M": 4.3061,
-        "1Y": 4.16675,
+        "10M": 4.2563,
+        "11M": 4.2110,
+        "12M": 4.16675,
         "18M": 3.9378,
         "2Y": 3.81955,
         "3Y": 3.6866,
         "4Y": 3.61725,
         "5Y": 3.5842,
+        "6Y": 3.5735,
         "7Y": 3.5719,
         "10Y": 3.5972,
         "15Y": 3.6590,
