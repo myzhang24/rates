@@ -69,11 +69,11 @@ class USDSOFRCurve:
         # Assuming self.future_knot_values and self.future_knot_dates are defined elsewhere
         ind = parse_dates(self.future_knot_dates)
         val = 1e2 * self.future_knot_values
-        df = pd.DataFrame(val, index=ind)
+        fwd = pd.DataFrame(val, index=ind)
 
         # Create a dotted black line plot with step interpolation (left-continuous)
-        plt.step(df.index, df.iloc[:, 0], where='post', linestyle=':', color='black')
-        plt.scatter(df.index, df.iloc[:, 0], color='black', s=10, zorder=5)
+        plt.step(fwd.index, fwd.iloc[:, 0], where='post', linestyle=':', color='black')
+        plt.scatter(fwd.index, fwd.iloc[:, 0], color='black', s=10, zorder=5)
         ax = plt.gca()
         ax.set_ylim(3.0, 5.25)
         ax.yaxis.set_major_locator(plt.MultipleLocator(0.25))
@@ -87,10 +87,10 @@ class USDSOFRCurve:
         plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
 
         # Adding annotations for the first six step-differences
-        step_diffs = 1e2 * np.diff(df.iloc[:n_cuts+1, 0])  # Calculate the differences for the first 4 steps
+        step_diffs = 1e2 * np.diff(fwd.iloc[:n_cuts+1, 0])  # Calculate the differences for the first 4 steps
         for i in range(n_cuts):
-            x_pos = df.index[i + 1]
-            y_pos = df.iloc[i + 1, 0]
+            x_pos = fwd.index[i + 1]
+            y_pos = fwd.iloc[i + 1, 0]
             plt.annotate(f"{step_diffs[i]:.1f} bps", xy=(x_pos, y_pos),
                          xytext=(x_pos, y_pos + 0.05),  # Offset annotation slightly for clarity
                          fontsize=9, color='blue')
@@ -105,8 +105,8 @@ class USDSOFRCurve:
     def plot_swap_zero_rate(self):
         ind = parse_dates(self.swap_knot_dates)
         val = 1e2 * self.swap_knot_values
-        df = pd.DataFrame(val, index=ind)
-        plt.plot(df.index, df.values)
+        zr = pd.DataFrame(val, index=ind)
+        plt.plot(zr.index, zr.values)
         plt.xlabel('Date')
         plt.ylabel('Zero Rates')
         plt.title('Continuously Compounded Zero Coupon Rate Curve')
@@ -354,8 +354,8 @@ def compute_convexity(curve: USDSOFRCurve, futures_3m):
     for st_et in fut_start_end_dates:
         st_et[1] += dt.timedelta(1)
     swaps = [SOFRSwap(start_date=x, maturity_date=y, pay_delay=0) for x, y in fut_start_end_dates]
-    swap_rates = price_swap_rates(curve, swaps)
-    return future_rates - swap_rates
+    par_rates = price_swap_rates(curve, swaps)
+    return future_rates - par_rates
 
 # Example usage
 if __name__ == '__main__':
