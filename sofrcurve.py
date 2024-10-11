@@ -5,6 +5,9 @@ from dateutil.relativedelta import relativedelta
 import logging
 logging.basicConfig(level=logging.INFO)
 import time
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from scipy.optimize import minimize, Bounds
 
 from utils import convert_dates, parse_dates
 from fixings import _SOFR_
@@ -13,7 +16,6 @@ from swaps import SOFRSwap
 from futures import SOFR1MFuture, SOFR3MFuture
 from fomc import generate_fomc_meeting_dates
 
-from scipy.optimize import minimize, Bounds
 
 # USE SOFR curve class
 class USDSOFRCurve:
@@ -62,9 +64,6 @@ class USDSOFRCurve:
         """
         Plots the future daily forward rates with additional annotations for the first n cuts.
         """
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
-
         # Assuming self.future_knot_values and self.future_knot_dates are defined elsewhere
         ind = parse_dates(self.future_knot_dates)
         val = 1e2 * self.future_knot_values
@@ -98,11 +97,23 @@ class USDSOFRCurve:
         plt.show()
         return self
 
-    def calibrate_convexity(self):
-        pass
-
     def discount_factor(self, dates: np.array) -> np.array:
         return df(dates, self.swap_knot_dates, self.swap_knot_values, convert_dates(self.reference_date))
+
+    def plot_swap_zero_rate(self):
+        ind = parse_dates(self.swap_knot_dates)
+        val = 1e2 * self.swap_knot_values
+        df = pd.DataFrame(val, index=ind)
+        plt.plot(df.index, df.values)
+        plt.xlabel('Date')
+        plt.ylabel('Zero Rates')
+        plt.title('Continuously Compounded Zero Coupon Rate Curve')
+        plt.tight_layout()
+        plt.show()
+        return self
+
+    def calibrate_convexity(self):
+        pass
 
 
 def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: float):
@@ -140,22 +151,25 @@ def par_rate(ref_date: float, schedule: np.array, knot_dates: np.array, knot_val
     denominator = np.sum(dcf * df_p)
     return numerator / denominator
 
-
-def spot_swap_rates(curve: USDSOFRCurve, swaps) -> np.array:
+def price_swap_rates(curve: USDSOFRCurve, swaps: list) -> np.array:
     """
-    This function prices a list of spot starting swaps on a curve.
-    :param curve:
-    :param swaps:
-    :return:
-    """
+        This function prices a list of spot starting swaps on a curve.
+        :param curve:
+        :param swaps:
+        :return:
+        """
     st = time.perf_counter()
     ref_date = convert_dates(curve.reference_date)
-    schedules = [SOFRSwap(curve.reference_date, tenor=x).get_float_leg_schedule(True).values for x in swaps]
+    schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
     knot_dates = curve.swap_knot_dates
     knot_values = curve.swap_knot_values
     rates = np.array(list(map(lambda schedule: par_rate(ref_date, schedule, knot_dates, knot_values), schedules)))
     logging.info(f"Priced {len(swaps)} spot swaps in {time.perf_counter() - st:.3f}s")
     return 1e2 * rates
+
+def spot_swap_rates(curve: USDSOFRCurve, swaps_list) -> np.array:
+    swaps = [SOFRSwap(curve.reference_date, tenor=tenor) for tenor in swaps_list]
+    return price_swap_rates(curve, swaps)
 
 def calibrate_swap_curve(curve: USDSOFRCurve, swaps: pd.Series):
     """
@@ -320,6 +334,20 @@ def calibrate_futures_curve(curve: USDSOFRCurve, futures_1m: pd.Series, futures_
 
     logging.info(f"Finished futures curve calibration in {time.perf_counter()-st:.3f}s")
 
+def compute_convexity(curve: USDSOFRCurve, futures_3m):
+    """
+    This function uses curve to evaluate future prices as well as equivalent swap rates.
+    :param curve:
+    :param futures_3m:
+    :return:
+    """
+    future_rates = 1e2 - price_3m_futures(curve, futures_3m)
+    fut_start_end_dates = [SOFR3MFuture(x).get_reference_start_end_dates() for x in futures_3m]
+    for st_et in fut_start_end_dates:
+        st_et[1] += dt.timedelta(1)
+    swaps = [SOFRSwap(start_date=x, maturity_date=y) for x, y in fut_start_end_dates]
+    swap_rates = price_swap_rates(curve, swaps)
+    return swap_rates - future_rates
 
 # Example usage
 if __name__ == '__main__':
@@ -346,20 +374,35 @@ if __name__ == '__main__':
         "SFRZ25": 96.560,
         "SFRH26": 96.610,
         "SFRM26": 96.625,
-        "SFRU26": 96.620
+        "SFRU26": 96.620,
+        "SFRZ26": 96.610,
+        "SFRH27": 96.605,
+        "SFRM27": 96.600,
+        "SFRU27": 96.590,
+        "SFRZ27": 96.575,
+        "SFRH28": 96.560,
+        "SFRM28": 96.545,
+        "SFRU28": 96.525,
     }, name="SOFR3M")
     sofr_swaps_rates = pd.Series({
         "1W": 4.8400,
+        "2W": 4.8318,
+        "3W": 4.8455,
         "1M": 4.8249,
+        "2M": 4.7530,
         "3M": 4.6709,
         "6M": 4.4717,
+        "9M": 4.3061,
         "1Y": 4.16675,
+        "18M": 3.9378,
         "2Y": 3.81955,
         "3Y": 3.6866,
+        "4Y": 3.61725,
         "5Y": 3.5842,
         "7Y": 3.5719,
         "10Y": 3.5972,
         "15Y": 3.6590,
+        "20Y": 3.6614,
         "30Y": 3.51965
     })
 
@@ -368,14 +411,21 @@ if __name__ == '__main__':
     calibrate_swap_curve(sofr, sofr_swaps_rates)
 
     fut_1m = price_1m_futures(sofr, sofr_1m_prices.index)
+    print("Pricing errors in bps for SOFR1M futures:")
     print(1e2 * (fut_1m - sofr_1m_prices.values))
 
     fut_3m = price_3m_futures(sofr, sofr_3m_prices.index)
+    print("Pricing errors in bps for SOFR3M futures:")
     print(1e2 * (fut_3m - sofr_3m_prices.values))
 
-    # sofr.plot_futures_daily_forwards(6)
-    # print(sofr.future_knot_values)
-
     swap_rates = spot_swap_rates(sofr, sofr_swaps_rates.index)
+    print("Pricing errors in bps for swaps")
     print(1e2 * (swap_rates - sofr_swaps_rates.values))
+
+    convexity = compute_convexity(sofr, futures_3m=sofr_3m_prices.index[1:])
+    print("Future-Swap convexity in bps:")
+    print(1e2 * convexity)
+
+    sofr.plot_futures_daily_forwards(6)
+    sofr.plot_swap_zero_rate()
     exit(0)
