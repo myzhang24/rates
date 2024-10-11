@@ -8,6 +8,8 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from scipy.optimize import minimize, Bounds
+from scipy.interpolate import CubicSpline
+
 
 from utils import convert_dates, parse_dates
 from fixings import _SOFR_
@@ -125,7 +127,11 @@ def df(dates: np.array, knot_dates: np.array, knot_values: np.array, ref_date: f
     :param ref_date:
     :return:
     """
-    zero_rates = np.interp(dates, knot_dates, knot_values)
+    cs = CubicSpline(knot_dates, knot_values, extrapolate=False)
+    zero_rates = cs(dates)
+    zero_rates[dates < knot_dates[0]] = knot_values[0]
+    zero_rates[dates > knot_dates[-1]] = knot_values[-1]
+    # zero_rates = np.interp(dates, knot_dates, knot_values)
     t_vect = (dates - ref_date) / 360
     return np.exp(-zero_rates * t_vect)
 
@@ -347,7 +353,7 @@ def compute_convexity(curve: USDSOFRCurve, futures_3m):
         st_et[1] += dt.timedelta(1)
     swaps = [SOFRSwap(start_date=x, maturity_date=y, pay_delay=0) for x, y in fut_start_end_dates]
     swap_rates = price_swap_rates(curve, swaps)
-    return swap_rates - future_rates
+    return future_rates - swap_rates
 
 # Example usage
 if __name__ == '__main__':
@@ -376,36 +382,36 @@ if __name__ == '__main__':
         "SFRM26": 96.625,
         "SFRU26": 96.620,
         "SFRZ26": 96.610,
-        "SFRH27": 96.605,
-        "SFRM27": 96.600,
-        "SFRU27": 96.590,
-        "SFRZ27": 96.575,
-        "SFRH28": 96.560,
-        "SFRM28": 96.545,
-        "SFRU28": 96.525,
+        # "SFRH27": 96.605,
+        # "SFRM27": 96.600,
+        # "SFRU27": 96.590,
+        # "SFRZ27": 96.575,
+        # "SFRH28": 96.560,
+        # "SFRM28": 96.545,
+        # "SFRU28": 96.525,
     }, name="SOFR3M")
     sofr_swaps_rates = pd.Series({
         "1W": 4.8400,
-        "2W": 4.84318,
-        "3W": 4.8455,
+        # "2W": 4.84318,
+        # "3W": 4.8455,
         "1M": 4.8249,
         "2M": 4.7530,
         "3M": 4.6709,
-        "4M": 4.6020,
-        "5M": 4.5405,
+        # "4M": 4.6020,
+        # "5M": 4.5405,
         "6M": 4.4717,
-        "7M": 4.41422,
-        "8M": 4.35880,
+        # "7M": 4.41422,
+        # "8M": 4.35880,
         "9M": 4.3061,
-        "10M": 4.2563,
-        "11M": 4.2110,
+        # "10M": 4.2563,
+        # "11M": 4.2110,
         "12M": 4.16675,
         "18M": 3.9378,
         "2Y": 3.81955,
         "3Y": 3.6866,
-        "4Y": 3.61725,
+        # "4Y": 3.61725,
         "5Y": 3.5842,
-        "6Y": 3.5735,
+        # "6Y": 3.5735,
         "7Y": 3.5719,
         "10Y": 3.5972,
         "15Y": 3.6590,
@@ -435,4 +441,5 @@ if __name__ == '__main__':
 
     sofr.plot_futures_daily_forwards(6)
     sofr.plot_swap_zero_rate()
+
     exit(0)
