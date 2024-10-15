@@ -354,7 +354,7 @@ class USDSOFRCurve:
         self.market_instruments["SOFR3M"] = sofr_3m_prices
         return self
 
-    def compute_convexity(self):
+    def calculate_convexity(self):
         """
         This function uses curve to evaluate future prices as well as equivalent swap rates.
         :return:
@@ -499,7 +499,7 @@ if __name__ == '__main__':
     sofr = USDSOFRCurve("2024-10-09")
     sofr.calibrate_futures_curve(sofr_1m_prices, sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
-    sofr.compute_convexity()
+    sofr.calculate_convexity()
 
     print("Pricing errors in bps for SOFR1M futures:")
     print(1e2 * (price_1m_futures(sofr, sofr_1m_prices.index) - sofr_1m_prices.values))

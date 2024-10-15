@@ -10,7 +10,7 @@ class SOFRSwap:
             reference_date=None,
             start_date=None,
             maturity_date=None,
-            tenor='5Y',
+            tenor=None,
             notional=1e6,
             coupon=0.05,
             frequency_fixed='12M',  # Annual payments
@@ -114,12 +114,8 @@ class SOFRSwap:
             accrual_start_date = adj_date_list[i]
             accrual_end_date = adj_date_list[i + 1]
 
-            # This is used for pay-in-front FRAs, which can be used to calibrate convexity
-            if self.pay_delay == "Spot":
-                payment_date = _SIFMA_.next_biz_day(self.reference_date, 2)
-            else:
             # Calculate payment date with payment delay in SIFMA calendar
-                payment_date = _SIFMA_.next_biz_day(accrual_end_date, self.pay_delay)
+            payment_date = _SIFMA_.next_biz_day(accrual_end_date, self.pay_delay)
 
             # Calculate day count fraction
             dcf = self.calculate_day_count_fraction(accrual_start_date, accrual_end_date)
