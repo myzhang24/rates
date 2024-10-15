@@ -208,16 +208,28 @@ class USDSOFRCurve:
         """
         plt.plot(self.convexity.index, 1e2 * self.convexity.values)
         ax = plt.gca()
+
+        # Set major ticks for March, June, September, and December
+        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[3, 6, 9, 12]))
+
+        # Formatting the x-axis as year and month in your preferred format
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%y' %b"))
+
+        # Set y-axis formatting
         ax.yaxis.set_major_locator(plt.MultipleLocator(1))
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, pos: '{:.2f}'.format(v)))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%y' %b"))
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
+
+        # Rotate x-axis labels
         plt.xticks(rotation=90, ha='center')
+
+        # Labels and title
         plt.xlabel('Date')
         plt.ylabel('Rate Difference (bps)')
         plt.title('Futures-FRA Convexity of 3M Forward Rates')
+
         plt.tight_layout()
         plt.show()
+
         return self
 
     def initialize_future_knots(self, last_meeting_date: dt.datetime = None):
