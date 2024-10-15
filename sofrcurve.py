@@ -133,6 +133,33 @@ def _price_swap_rates(swap_knot_values: np.ndarray,
     rates = 1e2 * numerators / denominators
     return rates
 
+# For discrete OIS compounding df
+def last_published_value(reference_dates: np.ndarray,
+                         knot_dates: np.ndarray,
+                         knot_values: np.ndarray) -> np.ndarray:
+    """
+    This function looks up reference_values for reference_dates according to knot_dates, knot_values
+    :param reference_dates:
+    :param knot_dates:
+    :param knot_values:
+    :return:
+    """
+    indices = np.searchsorted(knot_dates, reference_dates, side='right') - 1
+    indices = np.clip(indices, 0, len(knot_values) - 1)
+    return knot_values[indices]
+
+def sofr_compound(reference_dates: np.ndarray,
+                  reference_rates: np.ndarray):
+    """
+    This function computes the compounded SOFR rate given the fixings
+    :param reference_dates:
+    :param reference_rates:
+    :return:
+    """
+    num_days = np.diff(reference_dates)
+    rates = reference_rates[:-1]
+    annualized_rate = np.prod(1 + rates * num_days / 360) - 1
+    return 360 * annualized_rate / num_days.sum()
 
 # Define SOFR curve class
 class USDSOFRCurve:
@@ -184,6 +211,19 @@ class USDSOFRCurve:
 
     def discount_factor(self, dates: np.array) -> np.array:
         return _df(convert_date(self.reference_date), dates, self.swap_knot_dates, self.swap_knot_values)
+
+    def future_discount_factor(self, date: dt.datetime | dt.date) -> float:
+        """
+        Use futures staircase to compounds forward OIS style.
+        :param date:
+        :return:
+        """
+        biz_date_range = convert_date(_SIFMA_.biz_date_range(self.reference_date, date))
+        fwds = last_published_value(biz_date_range, self.future_knot_dates, self.future_knot_values)
+        num_days = np.diff(biz_date_range)
+        rates = fwds[:-1]
+        df = 1 / np.prod(1 + rates * num_days / 360)
+        return df
 
     def plot_swap_zero_rate(self):
         ind = parse_date(self.swap_knot_dates)
@@ -374,8 +414,8 @@ class USDSOFRCurve:
         fut_3m = self.market_instruments["SOFR3M"]
         fut_rates = 1e2 - fut_3m.values.squeeze()[1:]
         fut_st_et = [SOFR3MFuture(x).get_reference_start_end_dates() for x in fut_3m.index[1:]]
-        fras = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
-        fra_rates = price_swap_rates(self, fras)
+        fra = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
+        fra_rates = price_swap_rates(self, fra)
         df = pd.DataFrame(fut_rates - fra_rates, index=pd.DatetimeIndex([x[0] for x in fut_st_et]))
         self.convexity = df
         return self
