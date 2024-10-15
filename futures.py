@@ -1,9 +1,6 @@
 import datetime as dt
-import numpy as np
-import pandas as pd
 from pandas.tseries.offsets import MonthEnd
-
-from utils import convert_dates, get_nth_weekday_of_month, next_imm_date
+from date_utils import get_nth_weekday_of_month, next_imm_date
 
 
 # SOFR 1M futures class
@@ -54,6 +51,29 @@ class SOFR1MFuture:
     def get_reference_start_end_dates(self):
         return [self.reference_start_date, self.reference_end_date]
 
+class FF1MFuture(SOFR1MFuture):
+    # Overload
+    def parse_ticker(self):
+        # Ticker format: SER + Month Code + Year Digit(s)
+        if not self.ticker.startswith('FF'):
+            raise ValueError("Invalid ticker format for SOFR 1M Futures.")
+        code = self.ticker[3:]
+        month_code = code[0]
+        year_code = code[1:]
+        if month_code not in self.MONTH_CODES:
+            raise ValueError("Invalid month code in ticker.")
+        # Handle one or two-digit year codes (e.g., '5' for 2005 or '25' for 2025)
+        if len(year_code) == 1:
+            year = 2020 + int(year_code)
+        elif len(year_code) == 2:
+            year = 2000 + int(year_code)
+        else:
+            raise ValueError("Invalid year code in ticker.")
+        month = self.MONTH_CODES[month_code]
+
+        # 1M futures reference to first to last calendar day
+        self.reference_start_date = dt.datetime(year, month, 1)
+        self.reference_end_date = (self.reference_start_date + MonthEnd(0)).to_pydatetime()
 
 class SOFR3MFuture:
     QUARTERLY_MONTHS = {
@@ -89,10 +109,35 @@ class SOFR3MFuture:
 
         # SOFR 3M Futures expire on the third Wednesday of the contract month
         self.reference_start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
-        self.reference_end_date = next_imm_date(self.reference_start_date) - dt.timedelta(days=1)
+        self.reference_end_date = next_imm_date(self.reference_start_date)
 
     def get_reference_start_end_dates(self):
         return [self.reference_start_date, self.reference_end_date]
+
+class EDFuture(SOFR3MFuture):
+    # Overload
+    def parse_ticker(self):
+        # Ticker format: SFR + Month Code + Year Digit(s)
+        if not self.ticker.startswith('ED'):
+            raise ValueError("Invalid ticker format for SOFR 3M Futures.")
+        code = self.ticker[3:]
+        month_code = code[0]
+        year_code = code[1:]
+        if month_code not in self.QUARTERLY_MONTHS:
+            raise ValueError("Invalid month code in ticker.")
+        # Handle one or two-digit year codes
+        if len(year_code) == 1:
+            year = 2020 + int(year_code)
+        elif len(year_code) == 2:
+            year = 2000 + int(year_code)
+        else:
+            raise ValueError("Invalid year code in ticker.")
+        month = self.QUARTERLY_MONTHS[month_code]
+
+        # SOFR 3M Futures expire on the third Wednesday of the contract month
+        self.reference_start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
+        self.reference_end_date = next_imm_date(self.reference_start_date)
+
 
 if __name__ == '__main__':
     # Example for SOFR 1M Futures

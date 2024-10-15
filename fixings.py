@@ -5,9 +5,9 @@ import datetime as dt
 __fixing_cache__ = None
 
 class FixingManager:
-    def __init__(self):
-        self.original_file = "fixings/SOFR.csv"
-        self.clean_file = "fixings/SOFR.pkl"
+    def __init__(self, rate_name="SOFR"):
+        self.original_file = f"fixings/{rate_name}.csv"
+        self.clean_file = f"fixings/{rate_name}.pkl"
 
     def clean_fixings(self):
         df = pd.read_csv(self.original_file, index_col=0)
@@ -34,6 +34,7 @@ class FixingManager:
         return pd.merge_asof(res, __fixing_cache__, left_index=True, right_index=True).squeeze()
 
 _SOFR_ = FixingManager()
+_FF_ = FixingManager("FF")
 
 if __name__ == '__main__':
 
