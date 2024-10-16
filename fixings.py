@@ -40,6 +40,7 @@ if __name__ == '__main__':
 
     # Clean fixings
     _SOFR_.clean_fixings()
+    _FF_.clean_fixings()
 
     # Load fixings
     dg = _SOFR_.get_fixings(dt.datetime(2022, 1, 1), dt.datetime(2024, 10, 8))

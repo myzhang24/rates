@@ -10,7 +10,7 @@ from scipy.interpolate import CubicSpline
 from date_utils import _SIFMA_, convert_date, parse_date, generate_fomc_meeting_dates, time_it
 from fixings import _SOFR_
 from swaps import SOFRSwap
-from futures import SOFR1MFuture, SOFR3MFuture
+from futures import IRFuture
 
 
 # Pricing functions
@@ -357,8 +357,8 @@ class USDSOFRCurve:
         """
         # Create the futures
         ref_date = convert_date(self.reference_date)
-        futures_1m = [SOFR1MFuture(x) for x in futures_1m_prices.index]
-        futures_3m = [SOFR3MFuture(x) for x in futures_3m_prices.index]
+        futures_1m = [IRFuture(x) for x in futures_1m_prices.index]
+        futures_3m = [IRFuture(x) for x in futures_3m_prices.index]
         px_1m = futures_1m_prices.values.squeeze()
         px_3m = futures_3m_prices.values.squeeze()
 
@@ -413,7 +413,7 @@ class USDSOFRCurve:
         """
         fut_3m = self.market_instruments["SOFR3M"]
         fut_rates = 1e2 - fut_3m.values.squeeze()[1:]
-        fut_st_et = [SOFR3MFuture(x).get_reference_start_end_dates() for x in fut_3m.index[1:]]
+        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in fut_3m.index[1:]]
         fra = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
         fra_rates = price_swap_rates(self, fra)
         df = pd.DataFrame(fut_rates - fra_rates, index=pd.DatetimeIndex([x[0] for x in fut_st_et]))
@@ -431,7 +431,7 @@ def price_1m_futures(curve: USDSOFRCurve, futures_1m: list[str] | np.ndarray[str
     :return:
     """
     ref_date = convert_date(curve.reference_date)
-    st_et = np.array([convert_date(SOFR1MFuture(x).get_reference_start_end_dates()) for x in futures_1m])
+    st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in futures_1m])
     o_matrix = create_overlap_matrix(st_et, curve.future_knot_dates)
     stubs = calculate_stub_fixing(ref_date, st_et, False)
     n_days = (np.diff(st_et, axis=1) + 1).squeeze()
@@ -446,7 +446,7 @@ def price_3m_futures(curve: USDSOFRCurve, futures_3m: list[str] | np.ndarray[str
     :return:
     """
     ref_date = convert_date(curve.reference_date)
-    st_et = np.array([convert_date(SOFR3MFuture(x).get_reference_start_end_dates()) for x in futures_3m])
+    st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in futures_3m])
     o_matrix = create_overlap_matrix(st_et, curve.future_knot_dates)
     stubs = calculate_stub_fixing(ref_date, st_et, True)
     n_days = (np.diff(st_et, axis=1) + 1).squeeze()

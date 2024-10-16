@@ -139,15 +139,25 @@ def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.
     nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
     return nth_weekday
 
-def next_imm_date(d: dt.datetime | dt.date):
+def next_imm_date(d: dt.datetime | dt.date, months=3):
     """
-    This function gives the IMM date 3 months from a given d
+    This function gives closet the quarterly IMM date from a given date.
+    Optionally first shift input date d by x number of months specified by months
+    :param months:
     :param d:
     :return:
     """
     # Calculate the third Wednesday three months before the contract month
-    next_quarter = d + relativedelta(months=3)
-    return get_nth_weekday_of_month(next_quarter.year, next_quarter.month, 3, 2)
+    ansatz = d + relativedelta(months=months)
+    while ansatz.month not in [3, 6, 9, 12]:
+        ansatz += relativedelta(months=1)
+    ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    if ansatz >= d:
+        return ansatz
+
+    ansatz += relativedelta(months=3)
+    ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    return ansatz
 
 __FOMC_Meetings__ = [
         # 2019
