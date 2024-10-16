@@ -139,23 +139,29 @@ def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.
     nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
     return nth_weekday
 
-def next_imm_date(d: dt.datetime | dt.date, months=3):
+def next_imm_date(d: dt.datetime | dt.date, monthly=True):
     """
     This function gives closet the quarterly IMM date from a given date.
     Optionally first shift input date d by x number of months specified by months
-    :param months:
+    :param monthly:
     :param d:
     :return:
     """
     # Calculate the third Wednesday three months before the contract month
-    ansatz = d + relativedelta(months=months)
-    while ansatz.month not in [3, 6, 9, 12]:
-        ansatz += relativedelta(months=1)
-    ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    ansatz = d
+    if monthly:
+        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    else:
+        while ansatz.month not in [3, 6, 9, 12]:
+            ansatz += relativedelta(months=1)
+        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+
     if ansatz >= d:
         return ansatz
-
-    ansatz += relativedelta(months=3)
+    if monthly:
+        ansatz += relativedelta(months=1)
+    else:
+        ansatz += relativedelta(months=3)
     ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
     return ansatz
 

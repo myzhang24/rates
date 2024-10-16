@@ -2,7 +2,7 @@ import datetime as dt
 from pandas.tseries.offsets import MonthEnd
 from date_utils import get_nth_weekday_of_month, next_imm_date
 
-_MONTH_CODES_ = {
+_CODE_TO_MONTH_ = {
         'F': 1,  # January
         'G': 2,  # February
         'H': 3,  # March
@@ -17,7 +17,9 @@ _MONTH_CODES_ = {
         'Z': 12  # December
     }
 
-_QUARTERLY_MONTHS_ = {
+_MONTH_TO_CODE_ = {v: k for k, v in _CODE_TO_MONTH_.items()}
+
+_QUARTERLY_CODE_TO_MONTH_ = {
         'H': 3,  # March
         'M': 6,  # June
         'U': 9,  # September
@@ -25,23 +27,26 @@ _QUARTERLY_MONTHS_ = {
     }
 
 # Parsing functions
-def parse_future_ticker(ticker: str) -> (str, dt.datetime, dt.datetime):
+def parse_future_ticker(ticker: str, ref_date=dt.datetime.now()) -> (str, dt.datetime, dt.datetime):
     ticker = ticker.upper()
     # Ticker format: SER + Month Code + Year Digit(s)
     if ticker.startswith('SER') or ticker.startswith('FF'):
         code = ticker[3:]
         month_code = code[0]
         year_code = code[1:]
-        if month_code not in _MONTH_CODES_:
+        if month_code not in _CODE_TO_MONTH_:
             raise ValueError("Invalid month code in ticker.")
         # Handle one or two-digit year codes (e.g., '5' for 2005 or '25' for 2025)
         if len(year_code) == 1:
-            year = 2020 + int(year_code)
-        elif len(year_code) == 2:
-            year = 2000 + int(year_code)
+            current_year = ref_date.year
+            current_decade = current_year - current_year % 10
+            year_digit = int(year_code)
+            year = current_decade + year_digit
+            if year < current_year - 5:
+                year += 10  # Adjust for decade rollover
         else:
-            raise ValueError("Invalid year code in ticker.")
-        month = _MONTH_CODES_[month_code]
+            year = int(year_code) + 2000
+        month = _CODE_TO_MONTH_[month_code]
 
         # 1M futures reference to first to last calendar day
         start_date = dt.datetime(year, month, 1)
@@ -54,7 +59,7 @@ def parse_future_ticker(ticker: str) -> (str, dt.datetime, dt.datetime):
     code = ticker[3:]
     month_code = code[0]
     year_code = code[1:]
-    if month_code not in _QUARTERLY_MONTHS_:
+    if month_code not in _QUARTERLY_CODE_TO_MONTH_:
         raise ValueError("Invalid month code in ticker.")
     # Handle one or two-digit year codes
     if len(year_code) == 1:
@@ -63,11 +68,11 @@ def parse_future_ticker(ticker: str) -> (str, dt.datetime, dt.datetime):
         year = 2000 + int(year_code)
     else:
         raise ValueError("Invalid year code in ticker.")
-    month = _QUARTERLY_MONTHS_[month_code]
+    month = _QUARTERLY_CODE_TO_MONTH_[month_code]
 
     # SOFR 3M Futures expire on the third Wednesday of the contract month
     start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
-    end_date = next_imm_date(start_date, 3)
+    end_date = next_imm_date(start_date + dt.timedelta(days=1), False)
     fut_type = "SOFR3M" if ticker.startswith('SER') else "ED"
     return fut_type, start_date, end_date
 

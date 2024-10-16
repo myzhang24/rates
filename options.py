@@ -1,10 +1,11 @@
 import datetime as dt
 import re
 from dateutil.relativedelta import relativedelta
-from futures import _MONTH_CODES_
+from jax.example_libraries.stax import serial
+
+from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, _QUARTERLY_CODE_TO_MONTH_
 from date_utils import get_nth_weekday_of_month, next_imm_date
 
-_QUARTERLY_CODE_ = {3: "H", 6: "M", 9: "U", 12: "Z"}
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
     "SRA": 3,  # 3m mid curves
@@ -16,6 +17,11 @@ _MIDCURVINESS_ = {
     '4Q': 48,  # 4Y mid curves
     '5Q': 60,  # 5Y mid curves
 }
+
+def expiry_to_code(d: dt.datetime | dt.date) -> str:
+    month_code = _MONTH_TO_CODE_[d.month]
+    year_code = str(d.year % 10)
+    return f"{month_code}{year_code}"
 
 def parse_sofr_option_ticker(ticker: str):
     ticker = ticker.upper()
@@ -37,7 +43,7 @@ def parse_sofr_option_ticker(ticker: str):
     month_code = rest[0]
     year_code = rest[1:]
 
-    if month_code not in _MONTH_CODES_:
+    if month_code not in _CODE_TO_MONTH_:
         raise ValueError("Invalid month code")
 
     # Convert year code to full year (handles decade rollover)
@@ -51,7 +57,7 @@ def parse_sofr_option_ticker(ticker: str):
     else:
         year = int(year_code) + 2000
 
-    month = _MONTH_CODES_[month_code]
+    month = _CODE_TO_MONTH_[month_code]
     # Options expire the friday before the 3rd wednesday of the contract month
     imm_date = get_nth_weekday_of_month(year, month, 3, 2)
     expiry = imm_date - dt.timedelta(days=5)
@@ -59,11 +65,58 @@ def parse_sofr_option_ticker(ticker: str):
 
     # Add mid-curviness in months
     months_ahead = _MIDCURVINESS_[prefix]
-    underlying_start = next_imm_date(expiry + relativedelta(months=months_ahead), 0)
-    underlying_month_code = _QUARTERLY_CODE_[underlying_start.month]
-    underlying_ticker = f"SFR{underlying_month_code}{underlying_start.year % 10}"
+    underlying_start = next_imm_date(expiry + relativedelta(months=months_ahead), False)
+    underlying_code = expiry_to_code(underlying_start)
+    underlying_ticker = f"SFR{underlying_code}"
 
     return expiry, underlying_ticker
+
+def get_live_sofr_options(reference_date: dt.datetime):
+    """
+    Get live listed SOFR options according to CME listing schedule
+    https://www.cmegroup.com/education/articles-and-reports/trading-sofr-options.html
+    :param reference_date:
+    :return:
+    """
+    # Generate 16 consecutive quarterly months
+    quarterly_expiry = []
+    date = reference_date
+    while len(quarterly_expiry) < 16:
+        date = next_imm_date(date, False)
+        quarterly_expiry.append(expiry_to_code(date))
+        date += dt.timedelta(days=1)
+
+    # Generate nearest 4 non-quarterly months
+    serial_expiry = []
+    date = reference_date
+    while len(serial_expiry) < 4:
+        date = next_imm_date(date, True)
+        if date.month in [3, 6, 9, 12]:
+            date += dt.timedelta(days=1)
+            continue
+        serial_expiry.append(expiry_to_code(date))
+        date += dt.timedelta(days=1)
+
+    # All 16 quarterly expiry and all 4 serial expiry
+    regular_options = [f"SFR{x}" for x in quarterly_expiry] + [f"SFR{x}" for x in serial_expiry]
+
+    # 2. First 5 quarterly expiry and all 4 serial expiry for 1y, 2y, 3y, 4y, 5y Mid-Curve Options
+    midcurve_options = []
+    prefixes = ['0Q', '2Q', '3Q', '4Q', '5Q']
+    for prefix in prefixes:
+        midcurve_options += [f"{prefix}{x}" for x in quarterly_expiry[:5]]
+        midcurve_options += [f"{prefix}{x}" for x in serial_expiry]
+
+    # 3. First quarterly expiry and 2 serial expiry for 3M, 6M, 9M Mid-Curve Options
+    prefixes = ['SRA', 'SRR', 'SRW']
+    for prefix in prefixes:
+        midcurve_options += [f"{prefix}{quarterly_expiry[0]}",
+                             f"{prefix}{serial_expiry[0]}",
+                             f"{prefix}{serial_expiry[1]}"]
+
+    live_options = regular_options + midcurve_options
+    live_options = sorted(live_options, key=lambda x: parse_sofr_option_ticker(x)[0])
+    return live_options
 
 if __name__ == '__main__':
     # Example usage:
@@ -72,3 +125,8 @@ if __name__ == '__main__':
 
     exp, tick = parse_sofr_option_ticker('0QZ3')
     print(f"Expiry: {exp}, Underlying: {tick}")
+
+    # Generate tickers as of today
+    today = dt.datetime.now()
+    live = get_live_sofr_options(today)
+    print(f"Today's live SOFR options: {live}")
