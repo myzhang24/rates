@@ -1,9 +1,8 @@
 import datetime as dt
 import re
 from dateutil.relativedelta import relativedelta
-from jax.example_libraries.stax import serial
 
-from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, _QUARTERLY_CODE_TO_MONTH_
+from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_
 from date_utils import get_nth_weekday_of_month, next_imm_date
 
 _MIDCURVINESS_ = {
