@@ -2,8 +2,9 @@ import datetime as dt
 import re
 from dateutil.relativedelta import relativedelta
 
-from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_
+from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_utils import get_nth_weekday_of_month, next_imm_date
+from sofrcurve import SOFRCurve
 
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
@@ -68,7 +69,13 @@ def parse_sofr_option_ticker(ticker: str):
     underlying_code = expiry_to_code(underlying_start)
     underlying_ticker = f"SFR{underlying_code}"
 
-    return expiry, underlying_ticker
+    # Call put and strike
+    try:
+        cp, strike = re.findall(r"([CP]) ([0-9]*[.]?[0-9]+)", ticker)[0]
+        strike = float(strike)
+    except:
+        return expiry, underlying_ticker
+    return expiry, underlying_ticker, cp, strike
 
 def get_live_sofr_options(reference_date: dt.datetime):
     """
@@ -120,6 +127,20 @@ def get_live_sofr_options(reference_date: dt.datetime):
 def get_live_expiries(ref_date: dt.datetime, future_ticker: str) -> list:
     all_options = get_live_sofr_options(ref_date)
     return [opt for opt in all_options if parse_sofr_option_ticker(opt)[1] == future_ticker.upper()]
+
+
+class IROption:
+    def __init__(self, ticker: str):
+        ticker = ticker.upper()
+        self.ticker = ticker
+        self.expiry, underlying_ticker, self.cp, self.strike = parse_sofr_option_ticker(ticker)
+        self.underlying = IRFuture(underlying_ticker)
+
+
+class SOFRVolGrid:
+    def __init__(self, curve: SOFRCurve):
+        self.curve = curve
+        self.reference_date = curve.reference_date
 
 
 if __name__ == '__main__':

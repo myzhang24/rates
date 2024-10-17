@@ -162,7 +162,7 @@ def sofr_compound(reference_dates: np.ndarray,
     return 360 * annualized_rate / num_days.sum()
 
 # Define SOFR curve class
-class USDSOFRCurve:
+class SOFRCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date).to_pydatetime()
         self.market_instruments = {}
@@ -423,7 +423,7 @@ class USDSOFRCurve:
 
 # External pricing functionalities
 @time_it
-def price_1m_futures(curve: USDSOFRCurve, futures_1m: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_1m_futures(curve: SOFRCurve, futures_1m: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of SOFR 1m futures on a curve
     :param curve:
@@ -438,7 +438,7 @@ def price_1m_futures(curve: USDSOFRCurve, futures_1m: list[str] | np.ndarray[str
     return _price_1m_futures(curve.future_knot_values, o_matrix, stubs, n_days)
 
 @time_it
-def price_3m_futures(curve: USDSOFRCurve, futures_3m: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_3m_futures(curve: SOFRCurve, futures_3m: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of SOFR 3m futures on a curve
     :param curve:
@@ -453,7 +453,7 @@ def price_3m_futures(curve: USDSOFRCurve, futures_3m: list[str] | np.ndarray[str
     return _price_3m_futures(curve.future_knot_values, o_matrix, stubs, n_days)
 
 @time_it
-def price_swap_rates(curve: USDSOFRCurve, swaps: list[SOFRSwap]) -> np.ndarray:
+def price_swap_rates(curve: SOFRCurve, swaps: list[SOFRSwap]) -> np.ndarray:
     """
     This function prices a list of SOFR swaps
     :param curve:
@@ -474,7 +474,7 @@ def price_swap_rates(curve: USDSOFRCurve, swaps: list[SOFRSwap]) -> np.ndarray:
                       partition
                       )
 
-def price_spot_rates(curve: USDSOFRCurve, tenors: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_spot_rates(curve: SOFRCurve, tenors: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of spot starting par rates given tenor
     :param curve:
@@ -548,7 +548,7 @@ if __name__ == '__main__':
         "30Y": 3.51965
     })
 
-    sofr = USDSOFRCurve("2024-10-09")
+    sofr = SOFRCurve("2024-10-09")
     sofr.calibrate_futures_curve(sofr_1m_prices, sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
     sofr.calculate_convexity()
