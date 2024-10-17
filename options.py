@@ -19,7 +19,7 @@ _MIDCURVINESS_ = {
 
 def expiry_to_code(d: dt.datetime | dt.date) -> str:
     month_code = _MONTH_TO_CODE_[d.month]
-    year_code = str(d.year % 10)
+    year_code = str(d.year % 100)
     return f"{month_code}{year_code}"
 
 def parse_sofr_option_ticker(ticker: str):
@@ -34,7 +34,7 @@ def parse_sofr_option_ticker(ticker: str):
         raise ValueError("Invalid ticker prefix for SOFR options")
 
     # Extract the rest of the ticker
-    rest = re.findall(rf"{prefix}([FGHJKMNQUVXZ][\d+])", ticker)[0]
+    rest = re.findall(rf"{prefix}([FGHJKMNQUVXZ]\d+)", ticker)[0]
 
     if len(rest) not in [2, 3]:
         raise ValueError("Invalid ticker format")
@@ -114,18 +114,26 @@ def get_live_sofr_options(reference_date: dt.datetime):
                              f"{prefix}{serial_expiry[1]}"]
 
     live_options = regular_options + midcurve_options
-    live_options = sorted(live_options, key=lambda x: parse_sofr_option_ticker(x)[0])
+    live_options = sorted(live_options, key=lambda x: parse_sofr_option_ticker(x)[1])
     return live_options
+
+def get_live_expiries(ref_date: dt.datetime, future_ticker: str) -> list:
+    all_options = get_live_sofr_options(ref_date)
+    return [opt for opt in all_options if parse_sofr_option_ticker(opt)[1] == future_ticker.upper()]
+
 
 if __name__ == '__main__':
     # Example usage:
-    exp, tick = parse_sofr_option_ticker('SFRZ3')
+    exp, tick = parse_sofr_option_ticker('SFRH25')
     print(f"Expiry: {exp}, Underlying: {tick}")
 
-    exp, tick = parse_sofr_option_ticker('0QZ3')
+    exp, tick = parse_sofr_option_ticker('0QZ23')
     print(f"Expiry: {exp}, Underlying: {tick}")
 
     # Generate tickers as of today
     today = dt.datetime.now()
     live = get_live_sofr_options(today)
     print(f"Today's live SOFR options: {live}")
+
+    exp = get_live_expiries(today, "SFRZ24")
+    print(f"Today's expiries for SFRZ4 futures: {exp}")
