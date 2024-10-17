@@ -1,6 +1,8 @@
 import datetime as dt
+import numpy as np
 import re
 from dateutil.relativedelta import relativedelta
+from scipy.special import ndtr
 
 from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_utils import get_nth_weekday_of_month, next_imm_date
@@ -142,6 +144,34 @@ class SOFRVolGrid:
         self.curve = curve
         self.reference_date = curve.reference_date
 
+
+def _normal_price(dc: np.array,
+                 fut: np.array,
+                 strikes: np.array,
+                 t2e: np.array,
+                 vol: np.array,
+                 cp: np.array
+                 ) -> np.array:
+    """
+    Bachelier model for future pricing
+    :param dc:
+    :param fut:
+    :param strikes:
+    :param t2e:
+    :param vol:
+    :param cp:
+    :return:
+    """
+    moneyness = fut - strikes
+    vt = vol * np.sqrt(t2e)
+    d = moneyness / vt
+    cdf = ndtr(d)
+    pdf = 1 / np.sqrt(2 * np.pi) * np.exp(-1/2 * d ** 2)
+    fwd_price = cp * moneyness * cdf - (1-cp) * moneyness * (1 - cdf) + vt * pdf
+    return dc * fwd_price
+
+def _normal_vol():
+    pass
 
 if __name__ == '__main__':
     # Example usage:
