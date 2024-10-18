@@ -147,52 +147,79 @@ class SOFRVolGrid:
 
 
 def _normal_price(dc: np.array,
-                 fut: np.array,
-                 strikes: np.array,
-                 t2e: np.array,
-                 vol: np.array,
-                 cp: np.array
-                 ) -> np.array:
+                  fut: np.array,
+                  strikes: np.array,
+                  t2e: np.array,
+                  vol: np.array,
+                  pcs: np.array
+                  ) -> np.array:
     """
-    Black normal model for future pricing
-    :param dc:
-    :param fut:
-    :param strikes:
-    :param t2e:
-    :param vol:
-    :param cp:
-    :return:
+    Black normal model for option pricing of calls, puts, and straddles.
+    :param dc: Discount factors to expiry
+    :param fut: Futures prices
+    :param strikes: Strike prices
+    :param t2e: Time to expiry
+    :param vol: Normal volatilities
+    :param pcs: Option type indicator (-1 for put, 1 for call, 2 for straddle)
+    :return: Option premiums
     """
     moneyness = fut - strikes
     vt = vol * np.sqrt(t2e)
     d = moneyness / vt
+
+    # Calculate standard normal CDF and PDF
     cdf = ndtr(d)
-    pdf = 1 / np.sqrt(2 * np.pi) * np.exp(-1/2 * d ** 2)
-    fwd_price = cp * moneyness * cdf - (1-cp) * moneyness * (1 - cdf) + vt * pdf
+    pdf = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * d ** 2)
+
+    # Calculate phi_d_pcs based on pcs values
+    phi_d_pcs = np.where(pcs == 1, cdf,  # Call option
+                         np.where(pcs == -1, cdf - 1,  # Put option
+                                  np.where(pcs == 2, 2 * cdf - 1,  # Straddle
+                                           0)))  # Default case (pcs not -1, 1, or 2)
+
+    # Define k(pcs) for scaling
+    k = np.where(pcs == 2, 2, 1)
+
+    # Calculate forward price
+    fwd_price = moneyness * phi_d_pcs + k * vt * pdf
+
+    # Calculate option premium
     premium = dc * fwd_price
+
     return premium
+
 
 def _normal_vega(dc: np.array,
                  fut: np.array,
                  strikes: np.array,
                  t2e: np.array,
                  vol: np.array,
+                 pcs: np.array
                  ) -> np.array:
     """
-    Black normal model for future pricing
-    Vega for call and put are the same, so no cp array needed.
-    :param dc:
-    :param fut:
-    :param strikes:
-    :param t2e:
-    :param vol:
-    :return:
+    Black normal model vega calculation for calls, puts, and straddles.
+    Vega is adjusted based on the option type.
+    :param dc: Discount factors to expiry
+    :param fut: Futures prices
+    :param strikes: Strike prices
+    :param t2e: Time to expiry
+    :param vol: Normal volatilities
+    :param pcs: Option type indicator (-1 for put, 1 for call, 2 for straddle)
+    :return: Option vegas
     """
-    moneyness = fut - strikes
     vt = vol * np.sqrt(t2e)
+    moneyness = fut - strikes
     d = moneyness / vt
-    pdf = 1 / np.sqrt(2 * np.pi) * np.exp(-1/2 * d ** 2)
-    vega = dc * np.sqrt(t2e) * pdf
+
+    # Calculate standard normal PDF
+    pdf = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * d ** 2)
+
+    # Define k(pcs) for scaling vega
+    k = np.where(pcs == 2, 2, 1)
+
+    # Calculate vega
+    vega = dc * np.sqrt(t2e) * pdf * k
+
     return vega
 
 def _implied_normal_vol(dc: np.array,
@@ -230,7 +257,7 @@ def _implied_normal_vol(dc: np.array,
     # Define the Jacobian function
     def jacobian(vol):
         # Compute vegas
-        vega = _normal_vega(dc, fut, strikes, t2e, vol)
+        vega = _normal_vega(dc, fut, strikes, t2e, vol, cp)
         # Since each residual depends only on its own volatility, the Jacobian is diagonal
         # We create a full Jacobian matrix with zeros and fill the diagonal with vega
         np.fill_diagonal(jac, vega)
