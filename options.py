@@ -3,6 +3,7 @@ import numpy as np
 import re
 from dateutil.relativedelta import relativedelta
 from scipy.special import ndtr
+from scipy.optimize import least_squares
 
 from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_utils import get_nth_weekday_of_month, next_imm_date
@@ -153,7 +154,7 @@ def _normal_price(dc: np.array,
                  cp: np.array
                  ) -> np.array:
     """
-    Bachelier model for future pricing
+    Black normal model for future pricing
     :param dc:
     :param fut:
     :param strikes:
@@ -168,12 +169,86 @@ def _normal_price(dc: np.array,
     cdf = ndtr(d)
     pdf = 1 / np.sqrt(2 * np.pi) * np.exp(-1/2 * d ** 2)
     fwd_price = cp * moneyness * cdf - (1-cp) * moneyness * (1 - cdf) + vt * pdf
-    return dc * fwd_price
+    premium = dc * fwd_price
+    return premium
 
-def _normal_vol():
-    pass
+def _normal_vega(dc: np.array,
+                 fut: np.array,
+                 strikes: np.array,
+                 t2e: np.array,
+                 vol: np.array,
+                 ) -> np.array:
+    """
+    Black normal model for future pricing
+    Vega for call and put are the same, so no cp array needed.
+    :param dc:
+    :param fut:
+    :param strikes:
+    :param t2e:
+    :param vol:
+    :param cp:
+    :return:
+    """
+    moneyness = fut - strikes
+    vt = vol * np.sqrt(t2e)
+    d = moneyness / vt
+    pdf = 1 / np.sqrt(2 * np.pi) * np.exp(-1/2 * d ** 2)
+    vega = dc * np.sqrt(t2e) * pdf
+    return vega
 
-if __name__ == '__main__':
+def implied_normal_vol(dc: np.array,
+                       fut: np.array,
+                       strikes: np.array,
+                       t2e: np.array,
+                       cp: np.array,
+                       premium_market: np.array,
+                       initial_vol: np.array = None
+                       ) -> np.array:
+    """
+    Solve for implied normal volatility given market premiums.
+    """
+    # Ensure inputs are numpy arrays
+    dc = np.asarray(dc, dtype=np.float64)
+    fut = np.asarray(fut, dtype=np.float64)
+    strikes = np.asarray(strikes, dtype=np.float64)
+    t2e = np.asarray(t2e, dtype=np.float64)
+    cp = np.asarray(cp, dtype=np.float64)
+    premium_market = np.asarray(premium_market, dtype=np.float64)
+
+    # Initial guess for volatility if not provided
+    if initial_vol is None:
+        initial_vol = np.full_like(premium_market, 0.01 * fut)
+
+    # Define the objective function that returns residuals
+    def objective_function(vol):
+        # Compute model premiums
+        premium_model = _normal_price(dc, fut, strikes, t2e, vol, cp)
+        residuals = premium_model - premium_market
+        return residuals
+
+    n = len(fut)
+    jac = np.zeros((n, n))
+    # Define the Jacobian function
+    def jacobian(vol):
+        # Compute vegas
+        vega = _normal_vega(dc, fut, strikes, t2e, vol)
+        # Since each residual depends only on its own volatility, the Jacobian is diagonal
+        # We create a full Jacobian matrix with zeros and fill the diagonal with vega
+        np.fill_diagonal(jac, vega)
+        return jac
+
+    # Bounds for the volatility (non-negative)
+    vol_bounds = (1e-8, np.inf)
+
+    # Solve using method 'trf' with bounds and Jacobian
+    result = least_squares(objective_function, initial_vol, jac=jacobian, bounds=vol_bounds, method='trf')
+
+    # Extract the implied volatilities from the result
+    implied_vol = result.x
+
+    return implied_vol
+
+def debug_parsing():
     # Example usage:
     exp, tick = parse_sofr_option_ticker('SFRH25')
     print(f"Expiry: {exp}, Underlying: {tick}")
@@ -188,3 +263,19 @@ if __name__ == '__main__':
 
     exp = get_live_expiries(today, "SFRZ24")
     print(f"Today's expiries for SFRZ4 futures: {exp}")
+
+def debug_pricer():
+    k = 95.000 + 0.125 * np.arange(7)
+    f  = 95.6375 * np.ones(7)
+    cp = np.ones(7)
+    dc = 1 / (1 + 0.05 / 360) ** 56.1875 * np.ones(7)
+    vol = np.array([1.8323, 0.7268, 0.5831, 0.5765, 0.5813, 0.5999, 0.6126])
+    t = 56.1875 / 360 * np.ones(7)
+    p = _normal_price(dc, f, k, t, vol, cp)
+    vol2 = implied_normal_vol(dc, f, k, t, cp, p)
+    return p, vol2
+
+
+if __name__ == '__main__':
+    debug_pricer()
+    exit(0)
