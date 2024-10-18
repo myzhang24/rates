@@ -186,7 +186,6 @@ def _normal_vega(dc: np.array,
     :param strikes:
     :param t2e:
     :param vol:
-    :param cp:
     :return:
     """
     moneyness = fut - strikes
@@ -196,14 +195,14 @@ def _normal_vega(dc: np.array,
     vega = dc * np.sqrt(t2e) * pdf
     return vega
 
-def implied_normal_vol(dc: np.array,
-                       fut: np.array,
-                       strikes: np.array,
-                       t2e: np.array,
-                       cp: np.array,
-                       premium_market: np.array,
-                       initial_vol: np.array = None
-                       ) -> np.array:
+def _implied_normal_vol(dc: np.array,
+                        fut: np.array,
+                        strikes: np.array,
+                        t2e: np.array,
+                        cp: np.array,
+                        premium_market: np.array,
+                        initial_vol: np.array = None
+                        ) -> np.array:
     """
     Solve for implied normal volatility given market premiums.
     """
@@ -272,7 +271,7 @@ def debug_pricer():
     vol = np.array([1.8323, 0.7268, 0.5831, 0.5765, 0.5813, 0.5999, 0.6126])
     t = 56.1875 / 360 * np.ones(7)
     p = _normal_price(dc, f, k, t, vol, cp)
-    vol2 = implied_normal_vol(dc, f, k, t, cp, p)
+    vol2 = _implied_normal_vol(dc, f, k, t, cp, p)
     return p, vol2
 
 
