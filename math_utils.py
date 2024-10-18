@@ -247,13 +247,35 @@ def _sabr_fitter(
     return alpha_calibrated, rho_calibrated, nu_calibrated
 
 
+def _sticky_strike(fut_0: float,
+                   fut_1: float,
+                   strikes: np.ndarray,
+                   vol_0: np.ndarray,
+                   atm_vol: float=None) -> np.ndarray:
+    pass
+
+def _sticky_delta(fut_0: float,
+                  fut_1: float,
+                  strikes: np.ndarray,
+                  vol_0: np.ndarray) -> np.ndarray:
+    pass
+
+def _backbone_sticky_strike(fut_0: float,
+                            fut_1: float,
+                            bb: float,
+                            strikes: np.ndarray,
+                            vol_0: np.ndarray,
+                            atm_vol: float=None) -> np.ndarray:
+    pass
+
+
 def debug_pricer():
     k = 95.000 + 0.125 * np.arange(7)
     f  = 95.6375 * np.ones(7)
     cp = np.ones(7)
     dc = 1 / (1 + 0.05 / 360) ** 56.1875 * np.ones(7)
     vol = np.array([1.8323, 0.7268, 0.5831, 0.5765, 0.5813, 0.5999, 0.6126])
-    t = 56.1875 / 360 * np.ones(7)
+    t = 56.1875 / 252 * np.ones(7)
     p = _normal_price(dc, f, k, t, vol, cp)
     vol2 = _implied_normal_vol(dc, f, k, t, cp, p)
     return p, vol2
