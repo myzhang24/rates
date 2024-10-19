@@ -690,5 +690,8 @@ def debug_1m_calibration():
 
 # Example usage
 if __name__ == '__main__':
-    debug_1m_calibration()
+    # debug_1m_calibration()
+
+    debug_joint_calibration()
     exit(0)
+
