@@ -137,7 +137,7 @@ class IROption:
         self.underlying = IRFuture(underlying_ticker)
 
 
-class SOFRVolGrid:
+class SOFRFutureOptionVolGrid:
     def __init__(self, curve: SOFRCurve):
         self.curve = curve
         self.reference_date = curve.reference_date
@@ -159,7 +159,26 @@ def debug_parsing():
     exp = get_live_expiries(today, "SFRZ24")
     print(f"Today's expiries for SFRZ24 futures: {exp}")
 
+def debug_option_pricing():
+    import pandas as pd
+    from curve import SOFRCurve
+    sofr3m = pd.Series({
+        "SFRU4": 95.2125,
+        "SFRZ4": 95.615,
+        "SFRH5": 96.025,
+        "SFRM5": 96.33,
+        "SFRU5": 96.505,
+        "SFRZ5": 96.595,
+        "SFRH6": 96.64,
+        "SFRM6": 96.655,
+        "SFRU6": 96.645,
+    })
+    ref_date = dt.datetime(2024, 10, 18)
+    sofr = SOFRCurve(ref_date).calibrate_futures_curve(sofr3m=sofr3m)
+    exit(0)
 
 if __name__ == '__main__':
-    debug_parsing()
+    # debug_parsing()
+
+    debug_option_pricing()
     exit(0)

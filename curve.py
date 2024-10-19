@@ -402,8 +402,52 @@ class SOFRCurve:
 
         # Set curve status
         self.future_knot_values = res.x
-        self.market_instruments["SOFR1M"] = sofr_1m_prices
-        self.market_instruments["SOFR3M"] = sofr_3m_prices
+        self.market_instruments["SOFR1M"] = futures_1m_prices
+        self.market_instruments["SOFR3M"] = futures_3m_prices
+        return self
+
+    @time_it
+    def calibrate_futures_curve_3m(self, futures_3m_prices: pd.Series):
+        """
+        This function calibrates the futures curve to the 1m and 3m futures prices
+        :param futures_3m_prices:
+        :return:
+        """
+        # Create the futures
+        ref_date = convert_date(self.reference_date)
+        futures_3m = [IRFuture(x) for x in futures_3m_prices.index]
+        px_3m = futures_3m_prices.values.squeeze()
+
+        # Initialize the FOMC meeting effective dates up till expiry of the last 3m future
+        self.initialize_future_knots(futures_3m[-1].reference_end_date)
+
+
+        fut_start_end_3m = np.array([convert_date(fut.get_reference_start_end_dates()) for fut in futures_3m])
+        days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).squeeze()
+        stubs_3m = calculate_stub_fixing(ref_date, fut_start_end_3m, True)
+        o_matrix_3m = create_overlap_matrix(fut_start_end_3m, self.future_knot_dates).astype(float)
+
+        def objective_function(knot_values: np.ndarray,
+                               o_mat_3m: np.ndarray, fixing_3m: np.ndarray, n_days_3m: np.ndarray,
+                               prices_3m: np.ndarray):
+            res_3m = _price_3m_futures(knot_values, o_mat_3m, fixing_3m, n_days_3m)
+            loss = np.sum((res_3m - prices_3m) ** 2)
+            # Add a little curve constraint loss
+            loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+            return loss
+
+        # Initial values
+        initial_knot_values = self.future_knot_values
+        bounds = Bounds(0.0, 0.08)
+        res = minimize(objective_function,
+                       initial_knot_values,
+                       args=(o_matrix_3m, stubs_3m, days_3m, px_3m),
+                       method="L-BFGS-B",
+                       bounds=bounds)
+
+        # Set curve status
+        self.future_knot_values = res.x
+        self.market_instruments["SOFR3M"] = futures_3m_prices
         return self
 
     @time_it
