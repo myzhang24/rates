@@ -2,9 +2,9 @@ import datetime as dt
 import re
 from dateutil.relativedelta import relativedelta
 
-from futures import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
-from date_utils import get_nth_weekday_of_month, next_imm_date
-from sofrcurve import SOFRCurve
+from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
+from date_util import get_nth_weekday_of_month, next_imm_date
+from curve import SOFRCurve
 
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
@@ -157,7 +157,7 @@ def debug_parsing():
     print(f"Today's live SOFR options: {live}")
 
     exp = get_live_expiries(today, "SFRZ24")
-    print(f"Today's expiries for SFRZ4 futures: {exp}")
+    print(f"Today's expiries for SFRZ24 futures: {exp}")
 
 
 if __name__ == '__main__':

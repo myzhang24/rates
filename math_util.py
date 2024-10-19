@@ -46,38 +46,56 @@ def _normal_price(dc: np.array,
     return premium
 
 
-def _normal_vega(dc: np.array,
-                 fut: np.array,
-                 strikes: np.array,
-                 t2e: np.array,
-                 vol: np.array,
-                 pcs: np.array
-                 ) -> np.array:
+def _normal_greek(dc: np.array,
+                  fut: np.array,
+                  strikes: np.array,
+                  t2e: np.array,
+                  vol: np.array,
+                  pcs: np.array
+                  ) -> (np.array, np.array, np.array, np.array):
     """
-    Black normal model vega calculation for calls, puts, and straddles.
-    Vega is adjusted based on the option type.
+    Computes delta, gamma, vega, and theta for options under the Bachelier (normal) model.
+
     :param dc: Discount factors to expiry
     :param fut: Futures prices
     :param strikes: Strike prices
-    :param t2e: Time to expiry
+    :param t2e: Times to expiry
     :param vol: Normal volatilities
     :param pcs: Option type indicator (-1 for put, 1 for call, 2 for straddle)
-    :return: Option vegas
+    :return: Tuple of arrays (delta, gamma, vega, theta)
     """
-    vt = vol * np.sqrt(t2e)
     moneyness = fut - strikes
+    vt = vol * np.sqrt(t2e)
     d = moneyness / vt
 
-    # Calculate standard normal PDF
+    # Standard normal PDF and CDF
     pdf = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * d ** 2)
+    cdf = ndtr(d)
 
-    # Define k(pcs) for scaling vega
+    # phi_d_pcs
+    phi_d_pcs = np.where(pcs == 1, cdf,              # Call option
+                  np.where(pcs == -1, cdf - 1,       # Put option
+                    np.where(pcs == 2, 2 * cdf - 1,  # Straddle
+                             0)))  # Default case
+
+    # k(pcs) scaling factor
     k = np.where(pcs == 2, 2, 1)
 
-    # Calculate vega
+    # Delta
+    delta = dc * phi_d_pcs
+
+    # Gamma
+    gamma = dc * pdf / (vol * np.sqrt(t2e)) * k
+
+    # Vega
     vega = dc * np.sqrt(t2e) * pdf * k
 
-    return vega
+    # Theta
+    theta = -dc * pdf * (
+        vol / (2 * np.sqrt(t2e)) - moneyness / (vol * t2e ** (1.5))
+    ) * k
+
+    return delta, gamma, vega, theta
 
 def _implied_normal_vol(dc: np.array,
                         fut: np.array,
@@ -114,7 +132,7 @@ def _implied_normal_vol(dc: np.array,
     # Define the Jacobian function
     def jacobian(vol):
         # Compute vegas
-        vega = _normal_vega(dc, fut, strikes, t2e, vol, cp)
+        _, _, vega, _ = _normal_greek(dc, fut, strikes, t2e, vol, cp)
         # Since each residual depends only on its own volatility, the Jacobian is diagonal
         # We create a full Jacobian matrix with zeros and fill the diagonal with vega
         np.fill_diagonal(jac, vega)
@@ -284,5 +302,5 @@ def debug_sabr():
     pass
 
 if __name__ == '__main__':
-    debug_sabr()
+    debug_pricer()
     exit(0)

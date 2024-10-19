@@ -1,6 +1,6 @@
 import datetime as dt
 from pandas.tseries.offsets import MonthEnd
-from date_utils import get_nth_weekday_of_month, next_imm_date
+from date_util import get_nth_weekday_of_month, next_imm_date
 
 _CODE_TO_MONTH_ = {
         'F': 1,  # January
@@ -27,7 +27,8 @@ _QUARTERLY_CODE_TO_MONTH_ = {
     }
 
 # Parsing functions
-def parse_future_ticker(ticker: str, ref_date=dt.datetime.now()) -> (str, dt.datetime, dt.datetime):
+def parse_future_ticker(ticker: str,
+                        ref_date=dt.datetime.now()) -> (str, dt.datetime, dt.datetime):
     ticker = ticker.upper()
     # Ticker format: SER + Month Code + Year Digit(s)
     if ticker.startswith('SER') or ticker.startswith('FF'):
@@ -105,3 +106,5 @@ if __name__ == '__main__':
     print(f"Ticker: {sofr3m.ticker}")
     print(f"Reference Start Date: {sofr3m.reference_start_date.date()}")
     print(f"Reference End Date: {sofr3m.reference_end_date.date()}")
+
+    exit(0)

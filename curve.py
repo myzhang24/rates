@@ -7,10 +7,10 @@ import matplotlib.dates as mdates
 from scipy.optimize import minimize, Bounds
 from scipy.interpolate import CubicSpline
 
-from date_utils import _SIFMA_, convert_date, parse_date, generate_fomc_meeting_dates, time_it
-from fixings import _SOFR_
-from swaps import SOFRSwap
-from futures import IRFuture
+from date_util import _SIFMA_, convert_date, parse_date, generate_fomc_meeting_dates, time_it
+from fixing import _SOFR_
+from swap import SOFRSwap
+from future import IRFuture
 
 
 # Pricing functions
@@ -29,7 +29,7 @@ def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -
 
 def calculate_stub_fixing(ref_date: float, start_end_dates: np.ndarray, multiplicative=False) -> np.ndarray:
     """
-    This function calculates the stub fixings
+    This function calculates the stub fixing
     :param multiplicative:
     :param ref_date:
     :param start_end_dates:
@@ -151,7 +151,7 @@ def last_published_value(reference_dates: np.ndarray,
 def sofr_compound(reference_dates: np.ndarray,
                   reference_rates: np.ndarray):
     """
-    This function computes the compounded SOFR rate given the fixings
+    This function computes the compounded SOFR rate given the fixing
     :param reference_dates:
     :param reference_rates:
     :return:
@@ -406,6 +406,7 @@ class SOFRCurve:
         self.market_instruments["SOFR3M"] = sofr_3m_prices
         return self
 
+    @time_it
     def calculate_convexity(self):
         """
         This function uses curve to evaluate future prices as well as equivalent swap rates.

@@ -1,7 +1,7 @@
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
-from date_utils import _SIFMA_, convert_date, adjust_date
+from date_util import _SIFMA_, convert_date, adjust_date
 
 
 class SOFRSwap:

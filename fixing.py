@@ -6,8 +6,8 @@ __fixing_cache__ = None
 
 class FixingManager:
     def __init__(self, rate_name="SOFR"):
-        self.original_file = f"fixings/{rate_name}.csv"
-        self.clean_file = f"fixings/{rate_name}.pkl"
+        self.original_file = f"fixing/{rate_name}.csv"
+        self.clean_file = f"fixing/{rate_name}.pkl"
 
     def clean_fixings(self):
         df = pd.read_csv(self.original_file, index_col=0)
@@ -38,10 +38,10 @@ _FF_ = FixingManager("FF")
 
 if __name__ == '__main__':
 
-    # Clean fixings
+    # Clean fixing
     _SOFR_.clean_fixings()
     _FF_.clean_fixings()
 
-    # Load fixings
+    # Load fixing
     dg = _SOFR_.get_fixings(dt.datetime(2022, 1, 1), dt.datetime(2024, 10, 8))
     exit(0)
