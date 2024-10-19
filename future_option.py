@@ -173,8 +173,24 @@ def debug_option_pricing():
         "SFRM6": 96.655,
         "SFRU6": 96.645,
     })
+    sofr1m = pd.Series({
+        "SERV4": 95.1525,
+        "SERX4": 95.32,
+        "SERZ4": 95.425,
+        "SERF5": 95.555,
+        "SERG5": 95.735,
+        "SERH5": 95.82,
+        "SERJ5": 95.965,
+        "SERK5": 96.10,
+        "SERM5": 96.195,
+        "SERN5": 96.30,
+        "SERQ5": 96.39,
+        "SERU5": 96.42,
+        "SERV5": 96.48,
+    })
     ref_date = dt.datetime(2024, 10, 18)
-    sofr = SOFRCurve(ref_date).calibrate_futures_curve(sofr3m=sofr3m)
+    sofr = SOFRCurve(ref_date).calibrate_futures_curve(sofr1m, sofr3m)
+    sofr.plot_futures_daily_forwards(16, 6)
     exit(0)
 
 if __name__ == '__main__':

@@ -32,7 +32,7 @@ def parse_future_ticker(ticker: str,
     ticker = ticker.upper()
     # Ticker format: SER + Month Code + Year Digit(s)
     if ticker.startswith('SER') or ticker.startswith('FF'):
-        code = ticker[3:]
+        code = ticker[3:] if ticker.startswith('SER') else ticker[2:]
         month_code = code[0]
         year_code = code[1:]
         if month_code not in _CODE_TO_MONTH_:
