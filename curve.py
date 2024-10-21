@@ -93,7 +93,7 @@ def sum_partitions(arr: np.ndarray, partitions: np.ndarray):
     result = np.add.reduceat(arr, indices)
     return result
 
-def _df(ref_date: float, dates: np.array, knot_dates: np.array, knot_values: np.array):
+def _df(ref_date: float, dates: np.ndarray, knot_dates: np.ndarray, knot_values: np.ndarray):
     """
     Compute df using cubic spline interpolation on zero coupon rate knots. Low level numpy function.
     :param dates:
@@ -211,8 +211,17 @@ class SOFRCurve:
         plt.show()
         return self
 
-    def discount_factor(self, dates: np.array) -> np.array:
+    def discount_factor(self, dates: np.ndarray) -> np.ndarray:
         return _df(convert_date(self.reference_date), dates, self.swap_knot_dates, self.swap_knot_values)
+
+    def forward_rares(self, st: np.ndarray, et: np.ndarray) -> np.ndarray:
+        """
+        Returns the annualized forward rates from st to et (not accruing over et to et+1)
+        :param st:
+        :param et:
+        :return:
+        """
+        return 360 * (self.discount_factor(st) / self.discount_factor(et) - 1) / (et - st)
 
     def future_discount_factor(self, date: dt.datetime | dt.date) -> float:
         """
@@ -514,10 +523,10 @@ class SOFRCurve:
         """
         fut_3m = self.market_instruments["SOFR3M"]
         fut_rates = 1e2 - fut_3m.values.squeeze()[1:]
-        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in fut_3m.index[1:]]
-        fra = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
-        fra_rates = price_swap_rates(self, fra)
-        df = pd.DataFrame(fut_rates - fra_rates, index=pd.DatetimeIndex([x[0] for x in fut_st_et]))
+        fut_st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in fut_3m.index[1:]])
+        fut_st_et[:, 1] += 1    # This is because the end day is one day before IMM, which needs to be accrued.
+        forward_rates = 1e2 * self.forward_rares(fut_st_et[:, 0], fut_st_et[:, 1])
+        df = pd.Series(fut_rates - forward_rates, index=pd.DatetimeIndex(parse_date(fut_st_et[:, 0])))
         self.convexity = df
         return self
 

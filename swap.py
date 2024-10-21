@@ -1,7 +1,7 @@
 import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 from dateutil.relativedelta import relativedelta
-from date_util import _SIFMA_, convert_date, adjust_date
+from date_util import _SIFMA_, convert_date, adjust_date, day_count
 
 
 class SOFRSwap:
@@ -15,7 +15,7 @@ class SOFRSwap:
             coupon=0.05,
             frequency_fixed='12M',  # Annual payments
             frequency_float='12M',  # Annual payments
-            day_count='ACT/360',
+            day_count_convention='ACT/360',
             business_day_convention='Modified Following',
             roll_convention='None',  # 'None', 'EOM'
             pay_delay=2
@@ -28,7 +28,7 @@ class SOFRSwap:
         self.coupon = coupon
         self.frequency_fixed = frequency_fixed
         self.frequency_float = frequency_float
-        self.day_count = day_count
+        self.day_count_convention = day_count_convention
         self.business_day_convention = business_day_convention
         self.roll_convention = roll_convention
         self.pay_delay = pay_delay
@@ -118,7 +118,7 @@ class SOFRSwap:
             payment_date = _SIFMA_.next_biz_day(accrual_end_date, self.pay_delay)
 
             # Calculate day count fraction
-            dcf = self.calculate_day_count_fraction(accrual_start_date, accrual_end_date)
+            dcf = day_count(accrual_start_date, accrual_end_date, self.day_count_convention)
 
             schedule.append({
                 'Accrual Start Date': accrual_start_date,
@@ -165,14 +165,6 @@ class SOFRSwap:
                 current_date = prev_date
         return date_list
 
-    def calculate_day_count_fraction(self, start_date, end_date):
-        delta = end_date - start_date
-        if self.day_count == 'ACT/360':
-            day_count_fraction = delta.days / 360
-        else:
-            raise ValueError("Unsupported day count convention")
-        return day_count_fraction
-
     def get_fixed_leg_schedule(self, convert=False):
         return self.scheduler(self.frequency_fixed, convert=convert)
 
@@ -185,7 +177,7 @@ if __name__ == '__main__':
         reference_date="2024-10-8",
         start_date=None,  # Trade date
         tenor='5Y',
-        day_count='ACT/360',  # Both legs use ACT/360
+        day_count_convention='ACT/360',  # Both legs use ACT/360
         business_day_convention='Modified Following',
         roll_convention='End of Month',
     )

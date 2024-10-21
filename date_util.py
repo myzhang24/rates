@@ -61,6 +61,9 @@ class SIFMACalendar(AbstractHolidayCalendar):
         biz_days = pd.to_datetime([dt for dt in dates if self.is_biz_day(dt)])
         return biz_days
 
+    def biz_day_count(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> int:
+        return len(self.biz_date_range(st, et - dt.timedelta(days=1)))
+
 _SIFMA_ = SIFMACalendar()
 
 
@@ -90,6 +93,19 @@ def modified_preceding(date):
     if candidate.month != date.month:
         return _SIFMA_.next_biz_day(date, 0)
     return candidate
+
+def day_count(st: dt.datetime | dt.date, et: dt.datetime | dt.date, convention="ACT/360"):
+    if convention == "ACT/360":
+        return (et-st).days / 360
+    if convention == "ACT/365":
+        return (et-st).days / 365
+    if convention == "ACT":
+        return (et-st).days
+    if convention == "BIZ/252":
+        return _SIFMA_.biz_day_count(st, et) / 252
+    if convention == "BIZ":
+        return _SIFMA_.biz_day_count(st, et)
+    raise Exception(f"Do not understand convention {convention}")
 
 # Use 1904 date format
 __base_date__ = dt.datetime(1904, 1, 1)

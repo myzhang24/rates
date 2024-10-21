@@ -1,10 +1,12 @@
 import datetime as dt
+import pandas as pd
 import re
 from dateutil.relativedelta import relativedelta
 
 from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
-from date_util import get_nth_weekday_of_month, next_imm_date
-from curve import SOFRCurve
+from date_util import get_nth_weekday_of_month, next_imm_date, day_count
+from curve import SOFRCurve, price_3m_futures
+from math_util import _implied_normal_vol
 
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
@@ -20,7 +22,7 @@ _MIDCURVINESS_ = {
 
 def expiry_to_code(d: dt.datetime | dt.date) -> str:
     month_code = _MONTH_TO_CODE_[d.month]
-    year_code = str(d.year % 100)
+    year_code = str(d.year % 10)
     return f"{month_code}{year_code}"
 
 def parse_sofr_option_ticker(ticker: str):
@@ -62,6 +64,7 @@ def parse_sofr_option_ticker(ticker: str):
     imm_date = get_nth_weekday_of_month(year, month, 3, 2)
     expiry = imm_date - dt.timedelta(days=5)
     expiry = expiry.replace(hour=15) # 4pm CT 3pm EST
+    expiry_code = expiry_to_code(expiry)
 
     # Add mid-curviness in months
     months_ahead = _MIDCURVINESS_[prefix]
@@ -71,11 +74,17 @@ def parse_sofr_option_ticker(ticker: str):
 
     # Call put and strike
     try:
-        cp, strike = re.findall(r"([CP]) ([0-9]*[.]?[0-9]+)", ticker)[0]
+        call_put, strike = re.findall(r"([CPS]) ([0-9]*[.]?[0-9]+)", ticker)[0]
         strike = float(strike)
+        if call_put == "P":
+            cps = -1
+        if call_put == "C":
+            cps = 1
+        if call_put == "S":
+            cps = 2
     except:
         return expiry, underlying_ticker
-    return expiry, underlying_ticker, cp, strike
+    return expiry_code, underlying_ticker, expiry, cps, strike
 
 def get_live_sofr_options(reference_date: dt.datetime):
     """
@@ -121,7 +130,7 @@ def get_live_sofr_options(reference_date: dt.datetime):
                              f"{prefix}{serial_expiry[1]}"]
 
     live_options = regular_options + midcurve_options
-    live_options = sorted(live_options, key=lambda x: parse_sofr_option_ticker(x)[1])
+    live_options = sorted(live_options, key=lambda x: parse_sofr_option_ticker(x)[0])
     return live_options
 
 def get_live_expiries(ref_date: dt.datetime, future_ticker: str) -> list:
@@ -133,7 +142,7 @@ class IROption:
     def __init__(self, ticker: str):
         ticker = ticker.upper()
         self.ticker = ticker
-        self.expiry, underlying_ticker, self.cp, self.strike = parse_sofr_option_ticker(ticker)
+        self.expiry_ticker, underlying_ticker, self.expiry_datetime, self.cp, self.strike = parse_sofr_option_ticker(ticker)
         self.underlying = IRFuture(underlying_ticker)
 
 
@@ -141,7 +150,44 @@ class SOFRFutureOptionVolGrid:
     def __init__(self, curve: SOFRCurve):
         self.curve = curve
         self.reference_date = curve.reference_date
+        self.fut_data = pd.Series()
+        self.option_data = {}
 
+    def load_option_data(self, market_data: pd.Series, fut_data: pd.Series=pd.Series()):
+        if not fut_data.empty:
+            self.fut_data = fut_data
+        self.option_data = self.parse_option_data(market_data)
+        return self
+
+    def parse_option_data(self, market_data: pd.Series) -> dict:
+        df = pd.DataFrame(market_data, columns=["premium"]).rename_axis("ticker")
+        for ticker in market_data.index:
+            try:
+                expiry_ticker, underlying_ticker, expiry_datetime, cp, strike = parse_sofr_option_ticker(ticker)
+                df.loc[ticker, "expiry"] = expiry_ticker
+                df.loc[ticker, "expiry_dt"] = expiry_datetime
+                df.loc[ticker, "underlying_ticker"] = underlying_ticker
+                df.loc[ticker, "cp"] = cp
+                df.loc[ticker, "strike"] = strike
+            except:
+                continue
+        df = df.dropna()
+        gb = df.reset_index().groupby(["expiry", "underlying_ticker"])
+        df_dict = {key: group.set_index("ticker").drop(columns=["expiry", "underlying_ticker"]) for key, group in gb}
+        for key, df in df_dict.items():
+            exp_dt = df["expiry_dt"].iloc[0]
+            fut_ticker = key[1]
+            if fut_ticker in self.fut_data.index:
+                fut_price = self.fut_data[fut_ticker]
+            else:
+                fut_price = price_3m_futures(self.curve, [fut_ticker]).squeeze()
+            df["underlying_price"] = fut_price
+            df["t2e"] = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252") # Add 1 because expires at end of day
+            disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight
+            df["disc"] = disc
+            df["vol"] = _implied_normal_vol(disc, fut_price, df["strike"], df["t2e"], df["cp"], df["premium"])
+        self.option_data = df_dict
+        return df_dict
 
 def debug_parsing():
     # Example usage:
@@ -163,19 +209,39 @@ def debug_option_pricing():
     import pandas as pd
     from curve import SOFRCurve
     sofr3m = pd.Series({
-        "SFRU4": 95.2125,
-        "SFRZ4": 95.615,
-        "SFRH5": 96.025,
-        "SFRM5": 96.33,
-        "SFRU5": 96.505,
-        "SFRZ5": 96.595,
-        "SFRH6": 96.64,
-        "SFRM6": 96.655,
-        "SFRU6": 96.645,
+        "SFRU4": 95.2175,
+        "SFRZ4": 95.635,
+        "SFRH5": 96.05,
+        "SFRM5": 96.355,
+        "SFRU5": 96.53,
+        "SFRZ5": 96.625,
+        "SFRH6": 96.67,
+        "SFRM6": 96.685,
+        "SFRU6": 96.675,
     })
     ref_date = dt.datetime(2024, 10, 18)
     sofr = SOFRCurve(ref_date).calibrate_futures_curve_3m(sofr3m)
-    sofr.plot_futures_daily_forwards(16, 6)
+
+    market_data = pd.Series({
+        "SFRZ4C 95.25":	    0.3875,
+        "SFRZ4C 95.375":	0.27,
+        "SFRZ4C 95.50":	    0.1725,
+        "SFRZ4C 95.625":	0.095,
+        "SFRZ4C 95.75":	    0.0475,
+        "SFRZ4C 95.875":	0.03,
+        "SFRZ4C 96.00":	    0.02,
+        "SFRZ4C 96.125":	0.015,
+        "SFRZ4C 96.25":	    0.01,
+        "SFRZ4P 95.875":	0.2675,
+        "SFRZ4P 95.750":	0.1625,
+        "SFRZ4P 95.625":	0.085,
+        "SFRZ4P 95.500":	0.0375,
+        "SFRZ4P 95.375":	0.0125,
+        "SFRZ4P 95.250":	0.005,
+        "TEST Failure":     0.000
+    })
+    vol_grid = SOFRFutureOptionVolGrid(sofr)
+    vol_grid.load_option_data(market_data, sofr3m)
     exit(0)
 
 if __name__ == '__main__':

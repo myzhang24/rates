@@ -108,14 +108,6 @@ def _implied_normal_vol(dc: np.array,
     """
     Solve for implied normal volatility given market premiums.
     """
-    # Ensure inputs are numpy arrays
-    dc = np.asarray(dc, dtype=np.float64)
-    fut = np.asarray(fut, dtype=np.float64)
-    strikes = np.asarray(strikes, dtype=np.float64)
-    t2e = np.asarray(t2e, dtype=np.float64)
-    cp = np.asarray(cp, dtype=np.float64)
-    premium_market = np.asarray(premium_market, dtype=np.float64)
-
     # Initial guess for volatility if not provided
     if initial_vol is None:
         initial_vol = np.full_like(premium_market, 0.01 * fut)
@@ -127,7 +119,7 @@ def _implied_normal_vol(dc: np.array,
         residuals = premium_model - premium_market
         return residuals
 
-    n = len(fut)
+    n = len(strikes)
     jac = np.zeros((n, n))
     # Define the Jacobian function
     def jacobian(vol):
