@@ -34,11 +34,8 @@ def _normal_price(dc: np.array,
                                   np.where(pcs == 2, 2 * cdf - 1,  # Straddle
                                            0)))  # Default case (pcs not -1, 1, or 2)
 
-    # Define k(pcs) for scaling
-    k = np.where(pcs == 2, 2, 1)
-
     # Calculate forward price
-    fwd_price = moneyness * phi_d_pcs + k * vt * pdf
+    fwd_price = moneyness * phi_d_pcs + np.abs(pcs) * vt * pdf
 
     # Calculate option premium
     premium = dc * fwd_price
@@ -101,8 +98,8 @@ def _implied_normal_vol(dc: np.array,
                         fut: np.array,
                         strikes: np.array,
                         t2e: np.array,
-                        cp: np.array,
                         premium_market: np.array,
+                        cp: np.array,
                         initial_vol: np.array = None
                         ) -> np.array:
     """
@@ -119,7 +116,7 @@ def _implied_normal_vol(dc: np.array,
         residuals = premium_model - premium_market
         return residuals
 
-    n = len(strikes)
+    n = 1 if isinstance(strikes, float) else len(strikes)
     jac = np.zeros((n, n))
     # Define the Jacobian function
     def jacobian(vol):
@@ -280,12 +277,12 @@ def _backbone_sticky_strike(fut_0: float,
 
 
 def debug_pricer():
-    k = 95.000 + 0.125 * np.arange(7)
-    f  = 95.6375 * np.ones(7)
-    cp = np.ones(7)
-    dc = 1 / (1 + 0.05 / 360) ** 56.1875 * np.ones(7)
-    vol = np.array([1.8323, 0.7268, 0.5831, 0.5765, 0.5813, 0.5999, 0.6126])
-    t = 56.1875 / 252 * np.ones(7)
+    k = 95.25
+    f  = 95.635
+    cp = 1
+    dc = 0.9927
+    vol = 0.5977
+    t = 39.1/252
     p = _normal_price(dc, f, k, t, vol, cp)
     vol2 = _implied_normal_vol(dc, f, k, t, cp, p)
     return p, vol2

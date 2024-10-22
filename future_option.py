@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_util import get_nth_weekday_of_month, next_imm_date, day_count
 from curve import SOFRCurve, price_3m_futures
-from math_util import _implied_normal_vol
+from math_util import _implied_normal_vol, _normal_greek
 
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
@@ -153,9 +153,14 @@ class SOFRFutureOptionVolGrid:
         self.fut_data = pd.Series()
         self.option_data = {}
 
-    def load_option_data(self, market_data: pd.Series, fut_data: pd.Series=pd.Series()):
-        if not fut_data.empty:
-            self.fut_data = fut_data
+    def load_option_data(self, market_data: pd.Series, sofr3m: pd.Series=pd.Series(), sofr1m: pd.Series=pd.Series()):
+        if not sofr3m.empty:
+            self.fut_data = sofr3m
+        # Need to recalibrate curve to future data
+        if not sofr1m.empty:
+            self.curve = self.curve.calibrate_futures_curve(sofr1m, sofr3m)
+        else:
+            self.curve = self.curve.calibrate_futures_curve_3m(sofr3m)
         self.option_data = self.parse_option_data(market_data)
         return self
 
@@ -185,7 +190,8 @@ class SOFRFutureOptionVolGrid:
             df["t2e"] = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252") # Add 1 because expires at end of day
             disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight
             df["disc"] = disc
-            df["vol"] = _implied_normal_vol(disc, fut_price, df["strike"], df["t2e"], df["cp"], df["premium"])
+            df["vol"] = _implied_normal_vol(disc, fut_price, df["strike"], df["t2e"], df["premium"], df["cp"])
+            df.loc[:, ["delta", "gamma", "vega", "theta"]] = _normal_greek(disc, fut_price, df["strike"], df["t2e"], df["vol"], df["cp"])
         self.option_data = df_dict
         return df_dict
 
@@ -219,9 +225,14 @@ def debug_option_pricing():
         "SFRM6": 96.685,
         "SFRU6": 96.675,
     })
+    sofr1m = pd.Series({
+        "SERV4": 95.1525,
+        "SERX4": 95.325,
+        "SERZ4": 95.435,
+    })
     ref_date = dt.datetime(2024, 10, 18)
-    sofr = SOFRCurve(ref_date).calibrate_futures_curve_3m(sofr3m)
-
+    # sofr = SOFRCurve(ref_date).calibrate_futures_curve_3m(sofr3m)
+    sofr = SOFRCurve(ref_date).calibrate_futures_curve(sofr1m, sofr3m)
     market_data = pd.Series({
         "SFRZ4C 95.25":	    0.3875,
         "SFRZ4C 95.375":	0.27,
@@ -238,7 +249,6 @@ def debug_option_pricing():
         "SFRZ4P 95.500":	0.0375,
         "SFRZ4P 95.375":	0.0125,
         "SFRZ4P 95.250":	0.005,
-        "TEST Failure":     0.000
     })
     vol_grid = SOFRFutureOptionVolGrid(sofr)
     vol_grid.load_option_data(market_data, sofr3m)
