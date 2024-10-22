@@ -187,12 +187,22 @@ class SOFRFutureOptionVolGrid:
             else:
                 fut_price = price_3m_futures(self.curve, [fut_ticker]).squeeze()
             df["underlying_price"] = fut_price
-            df["t2e"] = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252") # Add 1 because expires at end of day
+            t2e = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252")
+            df["t2e"] = t2e # Add 1 because expires at end of day
             disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight
             df["disc"] = disc
-            df["vol"] = _implied_normal_vol(disc, fut_price, df["strike"], df["t2e"], df["premium"], df["cp"])
-            df.loc[:, ["delta", "gamma", "vega", "theta"]] = _normal_greek(disc, fut_price, df["strike"], df["t2e"], df["vol"], df["cp"])
-        self.option_data = df_dict
+            df["vol"] = _implied_normal_vol(disc, t2e, fut_price,
+                                            df["strike"].values.squeeze(),
+                                            df["premium"].values.squeeze(),
+                                            df["cp"].values.squeeze())
+            d, g, v, t = _normal_greek(disc, t2e, fut_price,
+                                       df["strike"].values.squeeze(),
+                                       df["vol"].values.squeeze(),
+                                       df["cp"].values.squeeze())
+            df["delta"] = d
+            df["gamma"] = g
+            df["vega"] = v
+            df["theta"] = t * 1/252
         return df_dict
 
 def debug_parsing():

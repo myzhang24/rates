@@ -3,13 +3,13 @@ from scipy.special import ndtr
 from scipy.optimize import least_squares
 
 
-def _normal_price(dc: np.array,
-                  fut: np.array,
-                  strikes: np.array,
-                  t2e: np.array,
-                  vol: np.array,
-                  pcs: np.array
-                  ) -> np.array:
+def _normal_price(dc: float | np.ndarray,
+                  t2e: float | np.ndarray,
+                  fut: float | np.ndarray,
+                  strikes: float | np.ndarray,
+                  vol: float | np.ndarray,
+                  pcs: float | np.ndarray
+                  ) -> float | np.ndarray:
     """
     Black normal model for option pricing of calls, puts, and straddles.
     :param dc: Discount factors to expiry
@@ -40,16 +40,16 @@ def _normal_price(dc: np.array,
     # Calculate option premium
     premium = dc * fwd_price
 
-    return premium
+    return premium.squeeze()
 
 
-def _normal_greek(dc: np.array,
-                  fut: np.array,
-                  strikes: np.array,
-                  t2e: np.array,
-                  vol: np.array,
-                  pcs: np.array
-                  ) -> (np.array, np.array, np.array, np.array):
+def _normal_greek(dc: float | np.ndarray,
+                  t2e: float | np.ndarray,
+                  fut: float | np.ndarray,
+                  strikes: np.ndarray,
+                  vol: np.ndarray,
+                  pcs: np.ndarray
+                  ) -> (np.ndarray, np.ndarray, np.ndarray, np.ndarray):
     """
     Computes delta, gamma, vega, and theta for options under the Bachelier (normal) model.
 
@@ -75,29 +75,24 @@ def _normal_greek(dc: np.array,
                     np.where(pcs == 2, 2 * cdf - 1,  # Straddle
                              0)))  # Default case
 
-    # k(pcs) scaling factor
-    k = np.where(pcs == 2, 2, 1)
-
     # Delta
     delta = dc * phi_d_pcs
 
     # Gamma
-    gamma = dc * pdf / (vol * np.sqrt(t2e)) * k
+    gamma = dc * pdf / (vol * np.sqrt(t2e)) * np.abs(pcs)
 
     # Vega
-    vega = dc * np.sqrt(t2e) * pdf * k
+    vega = dc * np.sqrt(t2e) * pdf * np.abs(pcs)
 
     # Theta
-    theta = -dc * pdf * (
-        vol / (2 * np.sqrt(t2e)) - moneyness / (vol * t2e ** (1.5))
-    ) * k
+    theta = -dc * pdf * vol / (2 * np.sqrt(t2e)) * np.abs(pcs)
 
     return delta, gamma, vega, theta
 
 def _implied_normal_vol(dc: np.array,
+                        t2e: np.array,
                         fut: np.array,
                         strikes: np.array,
-                        t2e: np.array,
                         premium_market: np.array,
                         cp: np.array,
                         initial_vol: np.array = None
@@ -112,7 +107,7 @@ def _implied_normal_vol(dc: np.array,
     # Define the objective function that returns residuals
     def objective_function(vol):
         # Compute model premiums
-        premium_model = _normal_price(dc, fut, strikes, t2e, vol, cp)
+        premium_model = _normal_price(dc, t2e, fut, strikes, vol, cp)
         residuals = premium_model - premium_market
         return residuals
 
@@ -121,7 +116,7 @@ def _implied_normal_vol(dc: np.array,
     # Define the Jacobian function
     def jacobian(vol):
         # Compute vegas
-        _, _, vega, _ = _normal_greek(dc, fut, strikes, t2e, vol, cp)
+        _, _, vega, _ = _normal_greek(dc, t2e, fut, strikes, vol, cp)
         # Since each residual depends only on its own volatility, the Jacobian is diagonal
         # We create a full Jacobian matrix with zeros and fill the diagonal with vega
         np.fill_diagonal(jac, vega)
@@ -283,8 +278,8 @@ def debug_pricer():
     dc = 0.9927
     vol = 0.5977
     t = 39.1/252
-    p = _normal_price(dc, f, k, t, vol, cp)
-    vol2 = _implied_normal_vol(dc, f, k, t, cp, p)
+    p = _normal_price(dc, t, f, k, vol, cp)
+    vol2 = _implied_normal_vol(dc, t, f, k, p, cp)
     return p, vol2
 
 def debug_sabr():
