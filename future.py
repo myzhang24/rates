@@ -81,7 +81,7 @@ def parse_future_ticker(ticker: str,
     # SOFR 3M Futures expire on the third Wednesday of the contract month
     start_date = get_nth_weekday_of_month(year, month, 3, 2)  # 3rd Wednesday
     end_date = next_imm_date(start_date + dt.timedelta(days=1), False)
-    fut_type = "SOFR3M" if ticker.startswith('SER') else "ED"
+    fut_type = "SOFR3M" if ticker.startswith('SFR') else "ED"
     return fut_type, start_date, end_date
 
 
