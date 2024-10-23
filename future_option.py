@@ -12,6 +12,9 @@ from date_util import get_nth_weekday_of_month, next_imm_date, day_count
 from curve import USDCurve, price_3m_futures
 from math_util import _implied_normal_vol, _normal_greek
 
+########################################################################################################################
+# Options utilities
+########################################################################################################################
 _MIDCURVINESS_ = {
     'SFR': 0,  # Standard
     "SRA": 3,  # 3m mid curves
@@ -151,13 +154,54 @@ def get_live_expiries(ref_date: dt.datetime, future_ticker: str) -> list:
     all_options = get_live_sofr_options(ref_date)
     return [opt for opt in all_options if parse_sofr_option_ticker(opt)[2] == future_ticker.upper()]
 
+def parse_option_data(market_data: pd.Series, curve: USDCurve) -> dict:
+    df = pd.DataFrame(market_data, columns=["premium"]).rename_axis("ticker")
+    for bbg_ticker in market_data.index:
+        try:
+            chain, expiry_ticker, underlying_ticker, expiry_datetime, cp, strike = parse_sofr_option_ticker(bbg_ticker)
+            df.loc[bbg_ticker, "chain"] = chain
+            df.loc[bbg_ticker, "expiry"] = expiry_ticker
+            df.loc[bbg_ticker, "expiry_dt"] = expiry_datetime
+            df.loc[bbg_ticker, "underlying_ticker"] = underlying_ticker
+            df.loc[bbg_ticker, "cp"] = cp
+            df.loc[bbg_ticker, "strike"] = strike
+        except:
+            continue
+    df = df.dropna()
+    gb = df.reset_index().groupby("chain")
+    df_dict = {key: group.set_index("ticker") for key, group in gb}
+    for chain, df in df_dict.items():
+        # Get expiry and ticker
+        exp_dt = df["expiry_dt"].iloc[0]
+        fut_ticker = df["underlying_ticker"].iloc[0]
 
+        # Here future price is either read from the curve market instruments, and if not present then priced from curve
+        if fut_ticker in curve.market_data["SOFR3M"].index:
+            fut_price = curve.market_data["SOFR3M"][fut_ticker]
+        else:
+            fut_price = price_3m_futures(curve, [fut_ticker]).squeeze()
+        df["underlying_price"] = fut_price
+
+        # Add OTM column
+        otm_rows = df["cp"] == 2
+        otm_rows |= (df["cp"] == 1) & (df["strike"] >= df["underlying_price"])
+        otm_rows |= (df["cp"] == -1) & (df["strike"] <= df["underlying_price"])
+        df["otm"] = otm_rows
+
+        # Add pricing columns
+        t2e = day_count(curve.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252")
+        df["t2e"] = t2e # Add 1 because expires at end of day
+        disc = curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight, computed from curve
+        df["disc"] = disc
+    return df_dict
+########################################################################################################################
+# Option and Vol class
+########################################################################################################################
 class IROption:
     def __init__(self, bbg_ticker: str):
         self.bbg_ticker = bbg_ticker.upper()
         self.chain, self.expiry_ticker, underlying_ticker, self.expiry_datetime, self.cp, self.strike = parse_sofr_option_ticker(bbg_ticker)
         self.underlying = IRFuture(underlying_ticker)
-
 
 class SOFRFutureOptionVolGrid:
     def __init__(self, curve: USDCurve):
@@ -166,12 +210,28 @@ class SOFRFutureOptionVolGrid:
         self.option_data = {}
         self.vol_grid = {}
 
-    def load_option_data(self, market_data: pd.Series, sofr3m: pd.Series=pd.Series(), sofr1m: pd.Series=pd.Series()):
-        if not sofr1m.empty and not sofr3m.empty:
-            self.curve = self.curve.calibrate_future_curve(sofr1m, sofr3m)
-        if not sofr3m.empty and sofr1m.empty:
-            self.curve = self.curve.calibrate_future_curve_sofr3m(sofr3m)
-        self.option_data = self.parse_option_data(market_data)
+    def load_option_data(self, market_data: pd.Series):
+        self.option_data = parse_option_data(market_data, self.curve)
+        for key, df in self.option_data.items():
+            # Solve for vol
+            df["vol"] = _implied_normal_vol(df["disc"].values.squeeze(),
+                                            df["t2e"].values.squeeze(),
+                                            df["underlying_price"].values.squeeze(),
+                                            df["strike"].values.squeeze(),
+                                            df["premium"].values.squeeze(),
+                                            df["cp"].values.squeeze())
+
+            # Compute greeks
+            d, g, v, t = _normal_greek(df["disc"].values.squeeze(),
+                                       df["t2e"].values.squeeze(),
+                                       df["underlying_price"].values.squeeze(),
+                                       df["strike"].values.squeeze(),
+                                       df["vol"].values.squeeze(),
+                                       df["cp"].values.squeeze())
+            df["delta"] = d
+            df["gamma"] = g
+            df["vega"] = v
+            df["theta"] = t * 1 / 252
         return self
 
     def calibrate_vol_grid(self, method="cubic"):
@@ -187,19 +247,34 @@ class SOFRFutureOptionVolGrid:
     def vol_grid_price(self, tickers: list | pd.Series):
         pass
 
+    def atm(self, chain: str) -> (float, float):
+        """
+        Given a chain, return the ATM vol (as an interpolation)
+        :param chain:
+        :return:
+        """
+        _, _, underlying, _ = parse_sofr_option_ticker(chain)
+        fut_price = self.curve.market_data["SOFR3M"][underlying]
+        atm_vol = self.vol_grid[chain](fut_price)
+        return fut_price, atm_vol
+
     def plot_smile(self, chain: str):
         """
         Plots market vol smile vs vol_grid smile
         :param chain:
         :return:
         """
+        # Get ATM
+        fut_price, atm_vol = self.atm(chain)
+
+        # Get Market
         mkt = self.option_data[chain]
-        fut_price = mkt["underlying_price"].iloc[0]
         mkt = mkt.loc[mkt["otm"] == 1, ["strike", "vol"]].sort_values("strike").set_index("strike")
+
+        # Get Vol Grid
         strikes = np.linspace(mkt.index.min(), mkt.index.max(), 50)
         vols = self.vol_grid[chain](strikes)
         grid = pd.DataFrame(vols, index=strikes)
-        atm_vol = self.vol_grid[chain](fut_price)
 
         # Plotting the line plot for grid with specified style (thin dotted opaque blue)
         plt.plot(grid.index, grid.values, linestyle=':', linewidth=1, color=(0, 0, 1, 0.5), label='Vol Grid')
@@ -253,77 +328,25 @@ class SOFRFutureOptionVolGrid:
         plt.tight_layout()
         plt.show()
 
-    def parse_option_data(self, market_data: pd.Series) -> dict:
-        df = pd.DataFrame(market_data, columns=["premium"]).rename_axis("ticker")
-        for bbg_ticker in market_data.index:
-            try:
-                chain, expiry_ticker, underlying_ticker, expiry_datetime, cp, strike = parse_sofr_option_ticker(bbg_ticker)
-                df.loc[ticker, "chain"] = chain
-                df.loc[ticker, "expiry"] = expiry_ticker
-                df.loc[ticker, "expiry_dt"] = expiry_datetime
-                df.loc[ticker, "underlying_ticker"] = underlying_ticker
-                df.loc[ticker, "cp"] = cp
-                df.loc[ticker, "strike"] = strike
-            except:
-                continue
-        df = df.dropna()
-        gb = df.reset_index().groupby("chain")
-        df_dict = {key: group.set_index("ticker") for key, group in gb}
-        for chain, df in df_dict.items():
-            # Get expiry and ticker
-            exp_dt = df["expiry_dt"].iloc[0]
-            fut_ticker = df["underlying_ticker"].iloc[0]
 
-            # Here future price is either read from the curve market instruments, and if not present then priced from curve
-            if fut_ticker in self.curve.market_data["SOFR3M"].index:
-                fut_price = self.curve.market_data["SOFR3M"][fut_ticker]
-            else:
-                fut_price = price_3m_futures(self.curve, [fut_ticker]).squeeze()
-            df["underlying_price"] = fut_price
 
-            # Add OTM column
-            otm_rows = df["cp"] == 2
-            otm_rows |= (df["cp"] == 1) & (df["strike"] >= df["underlying_price"])
-            otm_rows |= (df["cp"] == -1) & (df["strike"] <= df["underlying_price"])
-            df["otm"] = otm_rows
-
-            # Add pricing columns
-            t2e = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252")
-            df["t2e"] = t2e # Add 1 because expires at end of day
-            disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight, computed from curve
-            df["disc"] = disc
-
-            # Solve for vol
-            df["vol"] = _implied_normal_vol(disc, t2e, fut_price,
-                                            df["strike"].values.squeeze(),
-                                            df["premium"].values.squeeze(),
-                                            df["cp"].values.squeeze())
-
-            # Compute greeks
-            d, g, v, t = _normal_greek(disc, t2e, fut_price,
-                                       df["strike"].values.squeeze(),
-                                       df["vol"].values.squeeze(),
-                                       df["cp"].values.squeeze())
-            df["delta"] = d
-            df["gamma"] = g
-            df["vega"] = v
-            df["theta"] = t * 1/252
-        return df_dict
-
+########################################################################################################################
+# Debug Routines
+########################################################################################################################
 def debug_parsing():
     # Example usage:
-    exp, tick = parse_sofr_option_ticker('SFRH25')
-    print(f"Expiry: {exp}, Underlying: {tick}")
+    chain, exp, tick, exp_dt = parse_sofr_option_ticker('SFRH25')
+    print(f"Chain: {chain}, Expiry: {exp}, Underlying: {tick}, ExpiryDate: {exp_dt.date()}")
 
-    exp, tick = parse_sofr_option_ticker('0QZ23')
-    print(f"Expiry: {exp}, Underlying: {tick}")
+    chain, exp, tick, exp_dt = parse_sofr_option_ticker('0QZ23')
+    print(f"Chain: {chain}, Expiry: {exp}, Underlying: {tick}, ExpiryDate: {exp_dt.date()}")
 
     # Generate tickers as of today
     today = dt.datetime.now()
     live = get_live_sofr_options(today)
     print(f"Today's live SOFR options: {live}")
 
-    exp = get_live_expiries(today, "SFRZ24")
+    exp = get_live_expiries(today, "SFRZ4")
     print(f"Today's expiries for SFRZ24 futures: {exp}")
 
 def debug_option_pricing():
@@ -371,13 +394,12 @@ def debug_option_pricing():
     })
 
     ref_date = dt.datetime(2024, 10, 18)
-    sofr = USDCurve(ref_date)
-    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data, sofr3m, sofr1m).calibrate_vol_grid()
+    sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(sofr1m, sofr3m)
+    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
     vol_grid.plot_smile("SFRZ4")
     exit(0)
 
 if __name__ == '__main__':
     # debug_parsing()
-
     debug_option_pricing()
     exit(0)
