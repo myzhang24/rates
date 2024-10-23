@@ -2,12 +2,13 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 
-__fixing_cache__ = None
+__fixing_cache__ = {}
 
 class FixingManager:
     def __init__(self, rate_name="SOFR"):
-        self.original_file = f"fixing/{rate_name}.csv"
-        self.clean_file = f"fixing/{rate_name}.pkl"
+        self.rate_name = rate_name.upper()
+        self.original_file = f"fixing/{self.rate_name}.csv"
+        self.clean_file = f"fixing/{self.rate_name}.pkl"
 
     def clean_fixings(self):
         df = pd.read_csv(self.original_file, index_col=0)
@@ -18,22 +19,22 @@ class FixingManager:
 
     def load_fixings(self,):
         global __fixing_cache__
-        __fixing_cache__ = pd.read_pickle(self.clean_file)
+        __fixing_cache__[self.rate_name] = pd.read_pickle(self.clean_file)
         return self
 
     def get_fixings(self, st: dt.datetime, et: dt.datetime):
-        if __fixing_cache__ is None:
+        if self.rate_name not in __fixing_cache__:
             self.load_fixings()
-        return __fixing_cache__[st: et]
+        return __fixing_cache__[self.rate_name].loc[st: et]
 
     def get_fixings_asof(self, st: dt.datetime, et: dt.datetime):
-        if __fixing_cache__ is None:
+        if self.rate_name not in __fixing_cache__:
             self.load_fixings()
         dates = pd.date_range(st, et, freq='D')
         res = pd.DataFrame(index=dates)
-        return pd.merge_asof(res, __fixing_cache__, left_index=True, right_index=True).squeeze()
+        return pd.merge_asof(res, __fixing_cache__[self.rate_name], left_index=True, right_index=True).squeeze()
 
-_SOFR_ = FixingManager()
+_SOFR_ = FixingManager("SOFR")
 _FF_ = FixingManager("FF")
 
 if __name__ == '__main__':

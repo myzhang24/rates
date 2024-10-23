@@ -168,7 +168,7 @@ class SOFRFutureOptionVolGrid:
 
     def load_option_data(self, market_data: pd.Series, sofr3m: pd.Series=pd.Series(), sofr1m: pd.Series=pd.Series()):
         if not sofr1m.empty and not sofr3m.empty:
-            self.curve = self.curve.calibrate_future_curve_sofr(sofr1m, sofr3m)
+            self.curve = self.curve.calibrate_future_curve(sofr1m, sofr3m)
         if not sofr3m.empty and sofr1m.empty:
             self.curve = self.curve.calibrate_future_curve_sofr3m(sofr3m)
         self.option_data = self.parse_option_data(market_data)
