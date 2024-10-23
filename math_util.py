@@ -16,7 +16,7 @@ def _normal_price(dc: float | np.ndarray,
     :param fut: Futures prices
     :param strikes: Strike prices
     :param t2e: Time to expiry
-    :param vol: Normal volatilities
+    :param vol: Normal volatility
     :param pcs: Option type indicator (-1 for put, 1 for call, 2 for straddle)
     :return: Option premiums
     """
@@ -57,7 +57,7 @@ def _normal_greek(dc: float | np.ndarray,
     :param fut: Futures prices
     :param strikes: Strike prices
     :param t2e: Times to expiry
-    :param vol: Normal volatilities
+    :param vol: Normal volatility
     :param pcs: Option type indicator (-1 for put, 1 for call, 2 for straddle)
     :return: Tuple of arrays (delta, gamma, vega, theta)
     """
@@ -128,7 +128,7 @@ def _implied_normal_vol(dc: np.array,
     # Solve using method 'trf' with bounds and Jacobian
     result = least_squares(objective_function, initial_vol, jac=jacobian, bounds=vol_bounds, method='trf')
 
-    # Extract the implied volatilities from the result
+    # Extract the implied volatility from the result
     implied_vol = result.x
 
     return implied_vol
@@ -142,7 +142,7 @@ def _normal_sabr_implied_vol(
     nu: float | np.ndarray
 ) -> np.ndarray:
     """
-    Computes the normal SABR model-implied volatilities using an accurate approximation,
+    Computes the normal SABR model-implied volatility using an accurate approximation,
     suitable for vectorization and JIT compilation.
 
     :param F: Forward prices (scalar or array)
@@ -151,7 +151,7 @@ def _normal_sabr_implied_vol(
     :param alpha: SABR alpha parameters (scalar or array)
     :param rho: SABR rho parameters (scalar or array)
     :param nu: SABR nu parameters (scalar or array)
-    :return: Normal SABR implied volatilities (array)
+    :return: Normal SABR implied volatility (array)
     """
     # Compute moneyness
     FK = F - K
@@ -198,12 +198,12 @@ def _sabr_fitter(
 ) -> (float, float, float):
     """
     Calibrates the normal SABR parameters (alpha, rho, nu) to fit the observed
-    market normal volatilities.
+    market normal volatility.
 
     :param F: Forward price (scalar)
     :param T: Time to expiry (scalar)
     :param K: Strike prices (array)
-    :param sigma_n_market: Observed market normal volatilities (array)
+    :param sigma_n_market: Observed market normal volatility (array)
     :return: Tuple of calibrated parameters (alpha, rho, nu)
     """
     # Ensure inputs are numpy arrays
@@ -227,7 +227,7 @@ def _sabr_fitter(
         # Ensure parameters are within bounds
         if alpha <= 0 or nu <= 0 or not (-1 < rho < 1):
             return np.full_like(sigma_n_market, np.inf)
-        # Compute model-implied volatilities
+        # Compute model-implied volatility
         sigma_n_model = _normal_sabr_implied_vol(F, K, T, alpha, rho, nu)
         # Residuals
         residuals = sigma_n_model - sigma_n_market
@@ -247,28 +247,6 @@ def _sabr_fitter(
     # Extract calibrated parameters
     alpha_calibrated, rho_calibrated, nu_calibrated = result.x
     return alpha_calibrated, rho_calibrated, nu_calibrated
-
-
-def _sticky_strike(fut_0: float,
-                   fut_1: float,
-                   strikes: np.ndarray,
-                   vol_0: np.ndarray,
-                   atm_vol: float=None) -> np.ndarray:
-    pass
-
-def _sticky_delta(fut_0: float,
-                  fut_1: float,
-                  strikes: np.ndarray,
-                  vol_0: np.ndarray) -> np.ndarray:
-    pass
-
-def _backbone_sticky_strike(fut_0: float,
-                            fut_1: float,
-                            bb: float,
-                            strikes: np.ndarray,
-                            vol_0: np.ndarray,
-                            atm_vol: float=None) -> np.ndarray:
-    pass
 
 
 def debug_pricer():

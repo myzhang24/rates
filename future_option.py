@@ -194,6 +194,7 @@ def parse_option_data(market_data: pd.Series, curve: USDCurve) -> dict:
         disc = curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight, computed from curve
         df["disc"] = disc
     return df_dict
+
 ########################################################################################################################
 # Option and Vol class
 ########################################################################################################################
@@ -328,6 +329,15 @@ class SOFRFutureOptionVolGrid:
         plt.tight_layout()
         plt.show()
 
+def curve_shock(vol_grid: SOFRFutureOptionVolGrid,
+                new_curve: USDCurve):
+    """
+    Shock a vol_grid with a rate scenario in a sticky delta fashion -> same delta options have same vol
+    :param vol_grid:
+    :param new_curve:
+    :return:
+    """
+    pass
 
 
 ########################################################################################################################
