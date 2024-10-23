@@ -9,7 +9,7 @@ import matplotlib.ticker as ticker
 
 from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_util import get_nth_weekday_of_month, next_imm_date, day_count
-from curve import SOFRCurve, price_3m_futures
+from curve import USDCurve, price_3m_futures
 from math_util import _implied_normal_vol, _normal_greek
 
 _MIDCURVINESS_ = {
@@ -29,25 +29,25 @@ def expiry_to_code(d: dt.datetime | dt.date) -> str:
     year_code = str(d.year % 10)
     return f"{month_code}{year_code}"
 
-def parse_sofr_option_ticker(ticker: str):
+def parse_sofr_option_ticker(bbg_ticker: str):
     """
     Returns chain, expiry code, underlying ticker, expiry, call_put_straddle, strike
     For chain code only return chain expiry and underlying ticker
-    :param ticker:
+    :param bbg_ticker:
     :return:
     """
-    ticker = ticker.upper()
+    bbg_ticker = bbg_ticker.upper()
     # Try to match the prefix
     prefix = None
     for p in _MIDCURVINESS_.keys():
-        if ticker.startswith(p):
+        if bbg_ticker.startswith(p):
             prefix = p
             break
     if not prefix:
         raise ValueError("Invalid ticker prefix for SOFR options")
 
     # Extract the rest of the ticker
-    rest = re.findall(rf"{prefix}([FGHJKMNQUVXZ]\d+)", ticker)[0]
+    rest = re.findall(rf"{prefix}([FGHJKMNQUVXZ]\d+)", bbg_ticker)[0]
 
     if len(rest) not in [2, 3]:
         raise ValueError("Invalid ticker format")
@@ -85,7 +85,7 @@ def parse_sofr_option_ticker(ticker: str):
 
     # Call put and strike
     try:
-        call_put, strike = re.findall(r"([CPS]) ([0-9]*[.]?[0-9]+)", ticker)[0]
+        call_put, strike = re.findall(r"([CPS]) ([0-9]*[.]?[0-9]+)", bbg_ticker)[0]
         strike = float(strike)
         if call_put == "P":
             cps = -1
@@ -153,15 +153,14 @@ def get_live_expiries(ref_date: dt.datetime, future_ticker: str) -> list:
 
 
 class IROption:
-    def __init__(self, ticker: str):
-        ticker = ticker.upper()
-        self.ticker = ticker
-        self.chain, self.expiry_ticker, underlying_ticker, self.expiry_datetime, self.cp, self.strike = parse_sofr_option_ticker(ticker)
+    def __init__(self, bbg_ticker: str):
+        self.bbg_ticker = bbg_ticker.upper()
+        self.chain, self.expiry_ticker, underlying_ticker, self.expiry_datetime, self.cp, self.strike = parse_sofr_option_ticker(bbg_ticker)
         self.underlying = IRFuture(underlying_ticker)
 
 
 class SOFRFutureOptionVolGrid:
-    def __init__(self, curve: SOFRCurve):
+    def __init__(self, curve: USDCurve):
         self.curve = curve
         self.reference_date = curve.reference_date
         self.option_data = {}
@@ -169,9 +168,9 @@ class SOFRFutureOptionVolGrid:
 
     def load_option_data(self, market_data: pd.Series, sofr3m: pd.Series=pd.Series(), sofr1m: pd.Series=pd.Series()):
         if not sofr1m.empty and not sofr3m.empty:
-            self.curve = self.curve.calibrate_futures_curve(sofr1m, sofr3m)
+            self.curve = self.curve.calibrate_future_curve_sofr(sofr1m, sofr3m)
         if not sofr3m.empty and sofr1m.empty:
-            self.curve = self.curve.calibrate_futures_curve_3m(sofr3m)
+            self.curve = self.curve.calibrate_future_curve_sofr3m(sofr3m)
         self.option_data = self.parse_option_data(market_data)
         return self
 
@@ -256,9 +255,9 @@ class SOFRFutureOptionVolGrid:
 
     def parse_option_data(self, market_data: pd.Series) -> dict:
         df = pd.DataFrame(market_data, columns=["premium"]).rename_axis("ticker")
-        for ticker in market_data.index:
+        for bbg_ticker in market_data.index:
             try:
-                chain, expiry_ticker, underlying_ticker, expiry_datetime, cp, strike = parse_sofr_option_ticker(ticker)
+                chain, expiry_ticker, underlying_ticker, expiry_datetime, cp, strike = parse_sofr_option_ticker(bbg_ticker)
                 df.loc[ticker, "chain"] = chain
                 df.loc[ticker, "expiry"] = expiry_ticker
                 df.loc[ticker, "expiry_dt"] = expiry_datetime
@@ -276,8 +275,8 @@ class SOFRFutureOptionVolGrid:
             fut_ticker = df["underlying_ticker"].iloc[0]
 
             # Here future price is either read from the curve market instruments, and if not present then priced from curve
-            if fut_ticker in self.curve.market_instruments["SOFR3M"].index:
-                fut_price = self.curve.market_instruments["SOFR3M"][fut_ticker]
+            if fut_ticker in self.curve.market_data["SOFR3M"].index:
+                fut_price = self.curve.market_data["SOFR3M"][fut_ticker]
             else:
                 fut_price = price_3m_futures(self.curve, [fut_ticker]).squeeze()
             df["underlying_price"] = fut_price
@@ -291,7 +290,7 @@ class SOFRFutureOptionVolGrid:
             # Add pricing columns
             t2e = day_count(self.reference_date, exp_dt + dt.timedelta(days=1), "BIZ/252")
             df["t2e"] = t2e # Add 1 because expires at end of day
-            disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight
+            disc = self.curve.future_discount_factor(exp_dt)    # discount until expiry day but not overnight, computed from curve
             df["disc"] = disc
 
             # Solve for vol
@@ -372,7 +371,7 @@ def debug_option_pricing():
     })
 
     ref_date = dt.datetime(2024, 10, 18)
-    sofr = SOFRCurve(ref_date)
+    sofr = USDCurve(ref_date)
     vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data, sofr3m, sofr1m).calibrate_vol_grid()
     vol_grid.plot_smile("SFRZ4")
     exit(0)

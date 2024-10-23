@@ -1,7 +1,12 @@
 import datetime as dt
+
+from dateutil.relativedelta import relativedelta
 from pandas.tseries.offsets import MonthEnd
 from date_util import get_nth_weekday_of_month, next_imm_date
 
+########################################################################################################################
+# Code conventions
+########################################################################################################################
 _CODE_TO_MONTH_ = {
         'F': 1,  # January
         'G': 2,  # February
@@ -26,7 +31,9 @@ _QUARTERLY_CODE_TO_MONTH_ = {
         'Z': 12  # December
     }
 
-# Parsing functions
+########################################################################################################################
+# Future utilities
+########################################################################################################################
 def parse_future_ticker(ticker: str,
                         ref_date=dt.datetime.now()) -> (str, dt.datetime, dt.datetime):
     ticker = ticker.upper()
@@ -78,7 +85,34 @@ def parse_future_ticker(ticker: str,
     return fut_type, start_date, end_date
 
 
+def live_futures(date: dt.datetime, future: str = "sofr3m"):
+    """
+    Generates live future tickers (BBG) as of a given date
+    :param date:
+    :param future:
+    :return:
+    """
+    live_tickers = []
+    if future.lower() == "sofr3m":
+        start = date if date == next_imm_date(date, False) else next_imm_date(date - relativedelta(months=3), False)
+        for i in range(17):
+            month_code = _MONTH_TO_CODE_[start.month]
+            live_tickers.append(f"SFR{month_code}{str(start.year)[-1]}")
+            start = next_imm_date(start + relativedelta(months=1), False)
+
+    if future.lower() == "ff" or future.lower() == "sofr1m":
+        prefix = "FF" if future.lower() == "ff" else "SER"
+        for i in range(13):
+            year = date.year + ((date.month + i - 1) // 12)
+            month = (date.month + i - 1) % 12 + 1
+            month_code = _MONTH_TO_CODE_[month]
+            live_tickers.append(f"{prefix}{month_code}{str(year)[-1]}")
+
+    return live_tickers
+
+########################################################################################################################
 # IRFuture class
+########################################################################################################################
 class IRFuture:
     def __init__(self, ticker):
         self.ticker = ticker.upper()
@@ -90,15 +124,16 @@ class IRFuture:
     def get_reference_start_end_dates(self):
         return [self.reference_start_date, self.reference_end_date]
 
-
-if __name__ == '__main__':
+########################################################################################################################
+# debug
+########################################################################################################################
+def debug_parsing():
     # Example for SOFR 1M Futures
     sofr1m = IRFuture('SERM4')
     print("SOFR 1M Futures:")
     print(f"Ticker: {sofr1m.ticker}")
     print(f"Reference Start Date: {sofr1m.reference_start_date.date()}")
     print(f"Reference End Date: {sofr1m.reference_end_date.date()}")
-
 
     # Example for SOFR 3M Futures
     sofr3m = IRFuture('SFRU4')
@@ -107,4 +142,17 @@ if __name__ == '__main__':
     print(f"Reference Start Date: {sofr3m.reference_start_date.date()}")
     print(f"Reference End Date: {sofr3m.reference_end_date.date()}")
 
+def debug_generation():
+    date = dt.datetime(2024, 9, 13)
+    ff = live_futures(date, "FF")
+    sofr1m = live_futures(date, "SOFR1M")
+    sofr3m = live_futures(date, "SOFR3M")
+    print(f"\nAs of {date.date()} the live futures are")
+    print(ff)
+    print(sofr1m)
+    print(sofr3m)
+
+if __name__ == '__main__':
+    debug_parsing()
+    debug_generation()
     exit(0)

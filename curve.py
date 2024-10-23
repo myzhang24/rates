@@ -14,7 +14,8 @@ from future import IRFuture
 
 
 # Pricing functions
-def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -> np.ndarray:
+def _create_overlap_matrix(start_end_dates: np.ndarray,
+                           knot_dates: np.ndarray) -> np.ndarray:
     """
     This function creates overlap matrix, how many calendar days is each future exposed to each meeting-to-meeting period
     :param start_end_dates:
@@ -27,9 +28,11 @@ def create_overlap_matrix(start_end_dates: np.ndarray, knot_dates: np.ndarray) -
     ends = np.minimum(start_end_dates[:, 1].reshape(-1, 1), knot_ends.reshape(1, -1))
     return np.maximum(0, ends - starts + 1)
 
-def calculate_stub_fixing(ref_date: float, start_end_dates: np.ndarray, multiplicative=False) -> (float, np.ndarray):
+def _calculate_stub_fixing(ref_date: float,
+                           start_end_dates: np.ndarray,
+                           multiplicative=False) -> (float, np.ndarray):
     """
-    This function calculates the stub fixing
+    This function calculates the stub fixing. Returns overnight rate and the stub fixing sum or accrual
     :param multiplicative:
     :param ref_date:
     :param start_end_dates:
@@ -82,7 +85,7 @@ def _price_3m_futures(future_knot_values: np.ndarray,
     rate_avg = 360.0 * (rate_prod - 1) / n_days
     return 1e2 * (1 - rate_avg)
 
-def sum_partitions(arr: np.ndarray, partitions: np.ndarray):
+def _sum_partitions(arr: np.ndarray, partitions: np.ndarray):
     """
     This function sums a lists of entries in arr according to partition given by part
     :param arr:
@@ -128,16 +131,16 @@ def _price_swap_rates(swap_knot_values: np.ndarray,
     """
     dfs = _df(ref_date, schedules, swap_knot_dates, swap_knot_values)
     numerators = (dfs[:, 0] / dfs[:, 1] - 1) * dfs[:, 2]  # fwd_i * df_i
-    numerators = sum_partitions(numerators, partitions)
+    numerators = _sum_partitions(numerators, partitions)
     denominators = dcfs * dfs[:, 2]  # dcf_i * df_i
-    denominators = sum_partitions(denominators, partitions)
+    denominators = _sum_partitions(denominators, partitions)
     rates = 1e2 * numerators / denominators
     return rates
 
 # For discrete OIS compounding df
-def last_published_value(reference_dates: np.ndarray,
-                         knot_dates: np.ndarray,
-                         knot_values: np.ndarray) -> np.ndarray:
+def _last_published_value(reference_dates: np.ndarray,
+                          knot_dates: np.ndarray,
+                          knot_values: np.ndarray) -> np.ndarray:
     """
     This function looks up reference_values for reference_dates according to knot_dates, knot_values
     :param reference_dates:
@@ -149,10 +152,10 @@ def last_published_value(reference_dates: np.ndarray,
     indices = np.clip(indices, 0, len(knot_values) - 1)
     return knot_values[indices]
 
-def sofr_compound(reference_dates: np.ndarray,
+def _ois_compound(reference_dates: np.ndarray,
                   reference_rates: np.ndarray):
     """
-    This function computes the compounded SOFR rate given the fixing
+    This function computes the compounded OIS rate given the fixing
     :param reference_dates:
     :param reference_rates:
     :return:
@@ -162,25 +165,34 @@ def sofr_compound(reference_dates: np.ndarray,
     annualized_rate = np.prod(1 + rates * num_days / 360) - 1
     return 360 * annualized_rate / num_days.sum()
 
-# Define SOFR curve class
-class SOFRCurve:
+########################################################################################################################
+# Define USD curve class
+########################################################################################################################
+class USDCurve:
     def __init__(self, reference_date):
         self.reference_date = pd.Timestamp(reference_date).to_pydatetime()
-        self.is_effective_day = False
-        self.market_instruments = {}
-        self.future_knot_dates = None
-        self.future_knot_values = None
+        self.is_fomc = False    # Whether today is an FOMC effective date (one biz day after second meeting date)
+        self.market_data = {}
+        self.fomc_effective_dates = None
+        self.effective_rates_sofr = None
+        self.effective_rates_ff = None
         self.swap_knot_dates = None
         self.swap_knot_values = None
-        self.convexity = None
+        self.sofr_ff_spread = None
+        self.sofr_future_swap_spread = None
 
-    def plot_futures_daily_forwards(self, n_meetings=16, n_cuts=6):
+    def plot_effective_rates(self, rate="sofr", n_meetings=16, n_cuts=6):
         """
-        Plots the future daily forward rates with additional annotations for the first n cuts.
+        Plots the future implied daily forwards for various FOMC meeting effective dates.
+        :param rate:
+        :param n_meetings:
+        :param n_cuts:
+        :return:
         """
         # Assuming self.future_knot_values and self.future_knot_dates are defined elsewhere
-        ind = parse_date(self.future_knot_dates[:n_meetings])
-        val = 1e2 * self.future_knot_values[:n_meetings]
+        ind = parse_date(self.fomc_effective_dates[:n_meetings])
+        val = self.effective_rates_sofr[:n_meetings] if rate.lower() == "sofr" else self.effective_rates_ff[:n_meetings]
+        val *= 1e2
         fwd = pd.DataFrame(val, index=ind)
 
         # Create a dotted black line plot with step interpolation (left-continuous)
@@ -195,8 +207,8 @@ class SOFRCurve:
         plt.xticks(rotation=90, ha='center')
         ax.grid(which='major', axis='y', linestyle='-', linewidth='0.5', color='gray', alpha=0.3)
         plt.xlabel('Date')
-        plt.ylabel('SOFR Daily Forwards (%)')
-        plt.title('Constant Meeting-to-Meeting SOFR Daily Forwards Curve')
+        plt.ylabel(f'{rate.upper()} Daily Forwards (%)')
+        plt.title(f'Constant Meeting-to-Meeting {rate.upper()} Daily Forwards Curve')
 
         # Adding annotations for the first six step-differences
         step_diffs = 1e2 * np.diff(fwd.iloc[:n_cuts+1, 0])  # Calculate the differences for the first 4 steps
@@ -211,32 +223,43 @@ class SOFRCurve:
         plt.show()
         return self
 
-    def discount_factor(self, dates: np.ndarray) -> np.ndarray:
+    def swap_discount_factor(self, dates: np.ndarray) -> np.ndarray:
+        """
+        This function returns the discount factor according to the sofr swap curve
+        :param dates:
+        :return:
+        """
         return _df(convert_date(self.reference_date), dates, self.swap_knot_dates, self.swap_knot_values)
 
-    def forward_rares(self, st: np.ndarray, et: np.ndarray) -> np.ndarray:
+    def forward_rates(self, st: np.ndarray, et: np.ndarray) -> np.ndarray:
         """
         Returns the annualized forward rates from st to et (not accruing over et to et+1)
         :param st:
         :param et:
         :return:
         """
-        return 360 * (self.discount_factor(st) / self.discount_factor(et) - 1) / (et - st)
+        return 360 * (self.swap_discount_factor(st) / self.swap_discount_factor(et) - 1) / (et - st)
 
-    def future_discount_factor(self, date: dt.datetime | dt.date) -> float:
+    def future_discount_factor(self, rate: str, date: dt.datetime | dt.date) -> float:
         """
         Use futures staircase to compounds forward OIS style.
+        :param rate:
         :param date:
         :return:
         """
         biz_date_range = convert_date(_SIFMA_.biz_date_range(self.reference_date, date))
-        fwds = last_published_value(biz_date_range, self.future_knot_dates, self.future_knot_values)
+        effective_rates = self.effective_rates_sofr if rate.lower() == "sofr" else self.effective_rates_ff
+        fwds = _last_published_value(biz_date_range, self.fomc_effective_dates, effective_rates)
         num_days = np.diff(biz_date_range)
         rates = fwds[:-1]
         df = 1 / np.prod(1 + rates * num_days / 360)
         return df
 
-    def plot_swap_zero_rate(self):
+    def plot_swap_zero_rates(self):
+        """
+        This function plots the swap zero rates curve
+        :return:
+        """
         ind = parse_date(self.swap_knot_dates)
         val = 1e2 * self.swap_knot_values
         zr = pd.DataFrame(val, index=ind)
@@ -299,10 +322,11 @@ class SOFRCurve:
             knot_dates = np.array([next_biz_day] + effective_dates)
         else:
             knot_dates = np.array(effective_dates)
-            self.is_effective_day = True
+            self.is_fomc = True
 
-        self.future_knot_dates = convert_date(knot_dates)
-        self.future_knot_values = 0.05 * np.ones((len(knot_dates), ))
+        self.fomc_effective_dates = convert_date(knot_dates)
+        self.effective_rates_sofr = 0.05 * np.ones((len(knot_dates),))
+        self.effective_rates_ff = 0.05 * np.ones((len(knot_dates),))
         return self
 
     def initialize_swap_knots(self, swaps: list[SOFRSwap]):
@@ -356,11 +380,11 @@ class SOFRCurve:
 
         # Set curve status
         self.swap_knot_values = res.x
-        self.market_instruments["SOFRSwaps"] = spot_rates
+        self.market_data["SOFRSwaps"] = spot_rates
         return self
 
     @time_it
-    def calibrate_futures_curve(self, futures_1m_prices: pd.Series, futures_3m_prices: pd.Series):
+    def calibrate_future_curve_sofr(self, futures_1m_prices: pd.Series, futures_3m_prices: pd.Series):
         """
         This function calibrates the futures curve to the 1m and 3m futures prices
         :param futures_1m_prices:
@@ -369,7 +393,7 @@ class SOFRCurve:
         """
         # Create the futures
         ref_date = convert_date(self.reference_date)
-        fomc = 1e-2 if self.is_effective_day else 1.0
+        fomc = 1e-2 if self.is_fomc else 1.0
         futures_1m = [IRFuture(x) for x in futures_1m_prices.index]
         futures_3m = [IRFuture(x) for x in futures_3m_prices.index]
         px_1m = futures_1m_prices.values.squeeze()
@@ -385,12 +409,12 @@ class SOFRCurve:
         days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).squeeze()
 
         # stubs
-        on, stubs_1m = calculate_stub_fixing(ref_date, fut_start_end_1m, False)
-        _, stubs_3m = calculate_stub_fixing(ref_date, fut_start_end_3m, True)
+        on, stubs_1m = _calculate_stub_fixing(ref_date, fut_start_end_1m, False)
+        _, stubs_3m = _calculate_stub_fixing(ref_date, fut_start_end_3m, True)
 
         # Create the overlap matrices for 1m and 3m futures for knot periods
-        o_matrix_1m = create_overlap_matrix(fut_start_end_1m, self.future_knot_dates).astype(float)
-        o_matrix_3m = create_overlap_matrix(fut_start_end_3m, self.future_knot_dates).astype(float)
+        o_matrix_1m = _create_overlap_matrix(fut_start_end_1m, self.fomc_effective_dates).astype(float)
+        o_matrix_3m = _create_overlap_matrix(fut_start_end_3m, self.fomc_effective_dates).astype(float)
 
         def objective_function(knot_values: np.ndarray,
                                o_mat_1m: np.ndarray, fixing_1m: np.ndarray, n_days_1m: np.ndarray, prices_1m: np.ndarray,
@@ -405,7 +429,7 @@ class SOFRCurve:
             return loss
 
         # Initial values
-        initial_knot_values = self.future_knot_values
+        initial_knot_values = self.effective_rates_sofr
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_knot_values,
@@ -415,13 +439,13 @@ class SOFRCurve:
                        bounds=bounds)
 
         # Set curve status
-        self.future_knot_values = res.x
-        self.market_instruments["SOFR1M"] = futures_1m_prices
-        self.market_instruments["SOFR3M"] = futures_3m_prices
+        self.effective_rates_sofr = res.x
+        self.market_data["SOFR1M"] = futures_1m_prices
+        self.market_data["SOFR3M"] = futures_3m_prices
         return self
 
     @time_it
-    def calibrate_futures_curve_3m(self, futures_3m_prices: pd.Series):
+    def calibrate_future_curve_sofr3m(self, futures_3m_prices: pd.Series):
         """
         This function calibrates the futures curve to the 3m futures prices
         :param futures_3m_prices:
@@ -429,7 +453,7 @@ class SOFRCurve:
         """
         # Create the futures
         ref_date = convert_date(self.reference_date)
-        fomc = 1e-2 if self.is_effective_day else 1.0
+        fomc = 1e-2 if self.is_fomc else 1.0
         futures_3m = [IRFuture(x) for x in futures_3m_prices.index]
         px_3m = futures_3m_prices.values.squeeze()
 
@@ -439,8 +463,8 @@ class SOFRCurve:
 
         fut_start_end_3m = np.array([convert_date(fut.get_reference_start_end_dates()) for fut in futures_3m])
         days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).squeeze()
-        on, stubs_3m = calculate_stub_fixing(ref_date, fut_start_end_3m, True)
-        o_matrix_3m = create_overlap_matrix(fut_start_end_3m, self.future_knot_dates).astype(float)
+        on, stubs_3m = _calculate_stub_fixing(ref_date, fut_start_end_3m, True)
+        o_matrix_3m = _create_overlap_matrix(fut_start_end_3m, self.fomc_effective_dates).astype(float)
 
         def objective_function(knot_values: np.ndarray,
                                o_mat_3m: np.ndarray, fixing_3m: np.ndarray, n_days_3m: np.ndarray,
@@ -453,7 +477,7 @@ class SOFRCurve:
             return loss
 
         # Initial values
-        initial_knot_values = self.future_knot_values
+        initial_knot_values = self.effective_rates_sofr
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_knot_values,
@@ -462,12 +486,12 @@ class SOFRCurve:
                        bounds=bounds)
 
         # Set curve status
-        self.future_knot_values = res.x
-        self.market_instruments["SOFR3M"] = futures_3m_prices
+        self.effective_rates_sofr = res.x
+        self.market_data["SOFR3M"] = futures_3m_prices
         return self
 
     @time_it
-    def calibrate_futures_curve_1m(self, futures_1m_prices: pd.Series):
+    def calibrate_future_curve_1m(self, rate: str, futures_1m_prices: pd.Series):
         """
         This function calibrates the futures curve to the 1m futures prices
         :param futures_1m_prices:
@@ -475,7 +499,7 @@ class SOFRCurve:
         """
         # Create the futures
         ref_date = convert_date(self.reference_date)
-        fomc = 1e-2 if self.is_effective_day else 1.0
+        fomc = 1e-2 if self.is_fomc else 1.0
         futures_1m = [IRFuture(x) for x in futures_1m_prices.index]
         px_1m = futures_1m_prices.values.squeeze()
 
@@ -487,8 +511,8 @@ class SOFRCurve:
         days_1m = (np.diff(fut_start_end_1m, axis=1) + 1).squeeze()
 
         # stubs
-        on, stubs_1m = calculate_stub_fixing(ref_date, fut_start_end_1m, False)
-        o_matrix_1m = create_overlap_matrix(fut_start_end_1m, self.future_knot_dates).astype(float)
+        on, stubs_1m = _calculate_stub_fixing(ref_date, fut_start_end_1m, False)
+        o_matrix_1m = _create_overlap_matrix(fut_start_end_1m, self.fomc_effective_dates).astype(float)
 
         def objective_function(knot_values: np.ndarray,
                                o_mat_1m: np.ndarray, fixing_1m: np.ndarray, n_days_1m: np.ndarray,
@@ -502,7 +526,7 @@ class SOFRCurve:
             return loss
 
         # Initial values
-        initial_knot_values = self.future_knot_values
+        initial_knot_values = self.effective_rates_sofr
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_knot_values,
@@ -511,29 +535,46 @@ class SOFRCurve:
                        bounds=bounds)
 
         # Set curve status
-        self.future_knot_values = res.x
-        self.market_instruments["SOFR1M"] = futures_1m_prices
+        if rate.lower() == "sofr":
+            self.effective_rates_sofr = res.x
+            self.market_data["SOFR1M"] = futures_1m_prices
+        if rate.lower() == "ff":
+            self.effective_rates_ff = res.x
+            self.market_data["FF"] = futures_1m_prices
         return self
 
     @time_it
-    def calculate_convexity(self):
+    def calculate_sofr_future_swap_convexity(self):
         """
         This function uses curve to evaluate future prices as well as equivalent swap rates.
         :return:
         """
-        fut_3m = self.market_instruments["SOFR3M"]
+        fut_3m = self.market_data["SOFR3M"]
         fut_rates = 1e2 - fut_3m.values.squeeze()[1:]
         fut_st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in fut_3m.index[1:]])
         fut_st_et[:, 1] += 1    # This is because the end day is one day before IMM, which needs to be accrued.
-        forward_rates = 1e2 * self.forward_rares(fut_st_et[:, 0], fut_st_et[:, 1])
+        forward_rates = 1e2 * self.forward_rates(fut_st_et[:, 0], fut_st_et[:, 1])
         df = pd.Series(fut_rates - forward_rates, index=pd.DatetimeIndex(parse_date(fut_st_et[:, 0])))
-        self.convexity = df
+        self.sofr_future_swap_spread = df
+        return self
+
+    @time_it
+    def calculate_sofr_ff_spread(self):
+        """
+        This function uses curve to evaluate future prices as well as equivalent swap rates.
+        :return:
+        """
+        sofr = self.market_data["SOFR1M"]
+        ff = self.market_data["FF"]
+        fut_st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in sofr.index])
+        df = pd.Series(ff.values.squeeze() - sofr.values.squeeze(), index=pd.DatetimeIndex(parse_date(fut_st_et[:, 0])))
+        self.sofr_ff_spread = df
         return self
 
 
 # External pricing functionalities
 @time_it
-def price_1m_futures(curve: SOFRCurve, futures_1m: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_1m_futures(curve: USDCurve, futures_1m: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of SOFR 1m futures on a curve
     :param curve:
@@ -542,13 +583,13 @@ def price_1m_futures(curve: SOFRCurve, futures_1m: list[str] | np.ndarray[str]) 
     """
     ref_date = convert_date(curve.reference_date)
     st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in futures_1m])
-    o_matrix = create_overlap_matrix(st_et, curve.future_knot_dates)
-    _, stubs = calculate_stub_fixing(ref_date, st_et, False)
+    o_matrix = _create_overlap_matrix(st_et, curve.fomc_effective_dates)
+    _, stubs = _calculate_stub_fixing(ref_date, st_et, False)
     n_days = (np.diff(st_et, axis=1) + 1).squeeze()
-    return _price_1m_futures(curve.future_knot_values, o_matrix, stubs, n_days)
+    return _price_1m_futures(curve.effective_rates_sofr, o_matrix, stubs, n_days)
 
 @time_it
-def price_3m_futures(curve: SOFRCurve, futures_3m: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_3m_futures(curve: USDCurve, futures_3m: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of SOFR 3m futures on a curve
     :param curve:
@@ -557,13 +598,13 @@ def price_3m_futures(curve: SOFRCurve, futures_3m: list[str] | np.ndarray[str]) 
     """
     ref_date = convert_date(curve.reference_date)
     st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in futures_3m])
-    o_matrix = create_overlap_matrix(st_et, curve.future_knot_dates)
-    _, stubs = calculate_stub_fixing(ref_date, st_et, True)
+    o_matrix = _create_overlap_matrix(st_et, curve.fomc_effective_dates)
+    _, stubs = _calculate_stub_fixing(ref_date, st_et, True)
     n_days = (np.diff(st_et, axis=1) + 1).squeeze()
-    return _price_3m_futures(curve.future_knot_values, o_matrix, stubs, n_days)
+    return _price_3m_futures(curve.effective_rates_sofr, o_matrix, stubs, n_days)
 
 @time_it
-def price_swap_rates(curve: SOFRCurve, swaps: list[SOFRSwap]) -> np.ndarray:
+def price_swap_rates(curve: USDCurve, swaps: list[SOFRSwap]) -> np.ndarray:
     """
     This function prices a list of SOFR swaps
     :param curve:
@@ -584,7 +625,7 @@ def price_swap_rates(curve: SOFRCurve, swaps: list[SOFRSwap]) -> np.ndarray:
                       partition
                       )
 
-def price_spot_rates(curve: SOFRCurve, tenors: list[str] | np.ndarray[str]) -> np.ndarray:
+def price_spot_rates(curve: USDCurve, tenors: list[str] | np.ndarray[str]) -> np.ndarray:
     """
     This function prices a list of spot starting par rates given tenor
     :param curve:
@@ -658,10 +699,10 @@ def debug_joint_calibration():
         "30Y": 3.51965
     })
 
-    sofr = SOFRCurve("2024-10-09")
-    sofr.calibrate_futures_curve(sofr_1m_prices, sofr_3m_prices)
+    sofr = USDCurve("2024-10-09")
+    sofr.calibrate_future_curve_sofr(sofr_1m_prices, sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
-    sofr.calculate_convexity()
+    sofr.calculate_sofr_future_swap_convexity()
     print("Pricing errors in bps for SOFR1M futures:")
     print(1e2 * (price_1m_futures(sofr, sofr_1m_prices.index) - sofr_1m_prices.values))
 
@@ -671,8 +712,8 @@ def debug_joint_calibration():
     print("Pricing errors in bps for swaps")
     print(1e2 * (price_spot_rates(sofr, sofr_swaps_rates.index) - sofr_swaps_rates.values))
 
-    sofr.plot_futures_daily_forwards(16, 6)
-    sofr.plot_swap_zero_rate()
+    sofr.plot_effective_rates(16, 6)
+    sofr.plot_swap_zero_rates()
     sofr.plot_convexity()
 
 def debug_1m_calibration():
@@ -692,9 +733,9 @@ def debug_1m_calibration():
         "FFV5": 96.53,
     })
     ref_date = dt.datetime(2024, 10, 18)
-    ff_curve = SOFRCurve(ref_date).calibrate_futures_curve_1m(ff)
+    ff_curve = USDCurve(ref_date).calibrate_future_curve_1m(ff)
 
-    ff_curve.plot_futures_daily_forwards(16, 6)
+    ff_curve.plot_effective_rates(16, 6)
     exit(0)
 
 # Example usage
