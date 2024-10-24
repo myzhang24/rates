@@ -16,170 +16,12 @@ from pandas.tseries.holiday import (
 from dateutil.relativedelta import relativedelta
 import time
 import logging
-# Ensure logging is configured
 logging.basicConfig(level=logging.INFO)
 from functools import wraps
 
 
-class SIFMACalendar(AbstractHolidayCalendar):
-    rules = [
-        Holiday('NewYearsDay', month=1, day=1, observance=nearest_workday),
-        USMartinLutherKingJr,
-        USPresidentsDay,
-        GoodFriday,
-        USMemorialDay,
-        Holiday('Juneteenth', month=6, day=19, observance=nearest_workday, start_date='2022-01-01'),
-        Holiday('IndependenceDay', month=7, day=4, observance=nearest_workday),
-        USLaborDay,
-        USColumbusDay,
-        Holiday('VeteransDay', month=11, day=11, observance=nearest_workday),
-        USThanksgivingDay,
-        Holiday('ChristmasDay', month=12, day=25, observance=nearest_workday),
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self.holiday_set = self.holidays(start='1990-01-01', end='2060-12-31')
-
-    def is_biz_day(self, d: dt.datetime | dt.date) -> bool:
-        return d.weekday() < 5 and d not in self.holiday_set
-
-    def prev_biz_day(self, d: dt.datetime | dt.date, shift=1) -> dt.datetime | dt.date:
-        d -= dt.timedelta(days=shift)
-        while not self.is_biz_day(d):
-            d -= dt.timedelta(days=1)
-        return d
-
-    def next_biz_day(self, d: dt.datetime | dt.date, shift=1) -> dt.datetime | dt.date:
-        d += dt.timedelta(days=shift)
-        while not self.is_biz_day(d):
-            d += dt.timedelta(days=1)
-        return d
-
-    def biz_date_range(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> pd.Series:
-        dates = pd.date_range(start=st, end=et, freq='D')
-        biz_days = pd.to_datetime([dt for dt in dates if self.is_biz_day(dt)])
-        return biz_days
-
-    def biz_day_count(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> int:
-        return len(self.biz_date_range(st, et - dt.timedelta(days=1)))
-
-_SIFMA_ = SIFMACalendar()
-
-
-def adjust_date(date, convention):
-    if convention == 'Following':
-        adjusted_date = _SIFMA_.next_biz_day(date, 0)
-    elif convention == 'Modified Following':
-        adjusted_date = modified_following(date)
-    elif convention == 'Preceding':
-        adjusted_date = _SIFMA_.prev_biz_day(date, 0)
-    elif convention == 'Modified Preceding':
-        adjusted_date = modified_preceding(date)
-    else:
-        adjusted_date = date
-    return adjusted_date
-
-
-def modified_following(date):
-    candidate = _SIFMA_.next_biz_day(date, 0)
-    if candidate.month != date.month:
-        return _SIFMA_.prev_biz_day(date, 0)
-    return candidate
-
-
-def modified_preceding(date):
-    candidate = _SIFMA_.prev_biz_day(date, 0)
-    if candidate.month != date.month:
-        return _SIFMA_.next_biz_day(date, 0)
-    return candidate
-
-def day_count(st: dt.datetime | dt.date, et: dt.datetime | dt.date, convention="ACT/360"):
-    if convention == "ACT/360":
-        return (et-st).days / 360
-    if convention == "ACT/365":
-        return (et-st).days / 365
-    if convention == "ACT":
-        return (et-st).days
-    if convention == "BIZ/252":
-        return _SIFMA_.biz_day_count(st, et) / 252
-    if convention == "BIZ":
-        return _SIFMA_.biz_day_count(st, et)
-    raise Exception(f"Do not understand convention {convention}")
-
 # Use 1904 date format
 __base_date__ = dt.datetime(1904, 1, 1)
-
-def convert_date(dates: dt.datetime | dt.date | pd.DatetimeIndex | np.ndarray | list):
-    """
-    Conversion of a datetime or a list of datetime into 1904 int format
-    :param dates:
-    :return:
-    """
-    # If it is a single date, return int
-    if isinstance(dates, dt.datetime) or isinstance(dates, dt.date):
-        return (dates - __base_date__).days
-
-    # If it's a pandas DatetimeIndex, convert to an array of datetime
-    if isinstance(dates, pd.DatetimeIndex):
-        dates = dates.to_pydatetime()
-
-    # Convert each date to Excel 1904 integer format
-    return np.array([(d - __base_date__).days for d in dates])
-
-def parse_date(arr: int| float | np.ndarray) -> dt.datetime | np.ndarray:
-    """
-    Converts an iterable of ints back into np.ndarray of datetime
-    :param arr:
-    :return:
-    """
-    if isinstance(arr, np.ndarray | list | pd.DatetimeIndex | pd.Series):
-        return __base_date__ + np.array([dt.timedelta(days=int(x)) for x in arr])
-    return __base_date__ + dt.timedelta(days=int(arr))
-
-
-
-# Auxiliary functions
-def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.datetime:
-    """
-    This function gets the nth weekday of a given year, month. Useful for IMM dates.
-    :param year:
-    :param month:
-    :param n:
-    :param weekday:
-    :return:
-    """
-    # weekday: Monday=0, Sunday=6
-    first_day = dt.datetime(year, month, 1)
-    days_until_weekday = (weekday - first_day.weekday() + 7) % 7
-    nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
-    return nth_weekday
-
-def next_imm_date(d: dt.datetime | dt.date, monthly=True):
-    """
-    This function gives closet the quarterly IMM date from a given date.
-    Optionally first shift input date d by x number of months specified by months
-    :param monthly:
-    :param d:
-    :return:
-    """
-    # Calculate the third Wednesday three months before the contract month
-    ansatz = d
-    if monthly:
-        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
-    else:
-        while ansatz.month not in [3, 6, 9, 12]:
-            ansatz += relativedelta(months=1)
-        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
-
-    if ansatz >= d:
-        return ansatz
-    if monthly:
-        ansatz += relativedelta(months=1)
-    else:
-        ansatz += relativedelta(months=3)
-    ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
-    return ansatz
 
 __FOMC_Meetings__ = [
         # 2019
@@ -255,6 +97,169 @@ __FOMC_Meetings__ = [
         dt.datetime(2026, 10, 28),
         dt.datetime(2026, 12, 9),
 ]
+
+
+########################################################################################################################
+# SIFMA Class
+########################################################################################################################
+class SIFMACalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday('NewYearsDay', month=1, day=1, observance=nearest_workday),
+        USMartinLutherKingJr,
+        USPresidentsDay,
+        GoodFriday,
+        USMemorialDay,
+        Holiday('Juneteenth', month=6, day=19, observance=nearest_workday, start_date='2022-01-01'),
+        Holiday('IndependenceDay', month=7, day=4, observance=nearest_workday),
+        USLaborDay,
+        USColumbusDay,
+        Holiday('VeteransDay', month=11, day=11, observance=nearest_workday),
+        USThanksgivingDay,
+        Holiday('ChristmasDay', month=12, day=25, observance=nearest_workday),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.holiday_set = self.holidays(start='1990-01-01', end='2060-12-31')
+
+    def is_biz_day(self, d: dt.datetime | dt.date) -> bool:
+        if isinstance(d, dt.date):
+            dt.datetime(d.year, d.month, d.day)
+        return d.weekday() < 5 and d not in self.holiday_set
+
+    def prev_biz_day(self, d: dt.datetime | dt.date, shift=1) -> dt.datetime | dt.date:
+        d -= dt.timedelta(days=shift)
+        while not self.is_biz_day(d):
+            d -= dt.timedelta(days=1)
+        return d
+
+    def next_biz_day(self, d: dt.datetime | dt.date, shift=1) -> dt.datetime | dt.date:
+        d += dt.timedelta(days=shift)
+        while not self.is_biz_day(d):
+            d += dt.timedelta(days=1)
+        return d
+
+    def biz_date_range(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> pd.Series:
+        dates = pd.date_range(start=st, end=et, freq='D')
+        biz_days = pd.to_datetime([dt for dt in dates if self.is_biz_day(dt)])
+        return biz_days
+
+    def biz_day_count(self, st: dt.datetime | dt.date, et: dt.datetime | dt.date) -> int:
+        return len(self.biz_date_range(st, et - dt.timedelta(days=1)))
+
+_SIFMA_ = SIFMACalendar()
+
+
+def adjust_date(date, convention):
+    if convention == 'Following':
+        adjusted_date = _SIFMA_.next_biz_day(date, 0)
+    elif convention == 'Modified Following':
+        adjusted_date = modified_following(date)
+    elif convention == 'Preceding':
+        adjusted_date = _SIFMA_.prev_biz_day(date, 0)
+    elif convention == 'Modified Preceding':
+        adjusted_date = modified_preceding(date)
+    else:
+        adjusted_date = date
+    return adjusted_date
+
+
+def modified_following(date):
+    candidate = _SIFMA_.next_biz_day(date, 0)
+    if candidate.month != date.month:
+        return _SIFMA_.prev_biz_day(date, 0)
+    return candidate
+
+
+def modified_preceding(date):
+    candidate = _SIFMA_.prev_biz_day(date, 0)
+    if candidate.month != date.month:
+        return _SIFMA_.next_biz_day(date, 0)
+    return candidate
+
+def day_count(st: dt.datetime | dt.date, et: dt.datetime | dt.date, convention="ACT/360"):
+    if convention == "ACT/360":
+        return (et-st).days / 360
+    if convention == "ACT/365":
+        return (et-st).days / 365
+    if convention == "ACT":
+        return (et-st).days
+    if convention == "BIZ/252":
+        return _SIFMA_.biz_day_count(st, et) / 252
+    if convention == "BIZ":
+        return _SIFMA_.biz_day_count(st, et)
+    raise Exception(f"Do not understand convention {convention}")
+
+
+def convert_date(dates: dt.datetime | dt.date | pd.DatetimeIndex | np.ndarray | list):
+    """
+    Conversion of a datetime or a list of datetime into 1904 int format
+    :param dates:
+    :return:
+    """
+    # If it is a single date, return int
+    if isinstance(dates, dt.datetime) or isinstance(dates, dt.date):
+        return (dates - __base_date__).days
+
+    # If it's a pandas DatetimeIndex, convert to an array of datetime
+    if isinstance(dates, pd.DatetimeIndex):
+        dates = dates.to_pydatetime()
+
+    # Convert each date to Excel 1904 integer format
+    return np.array([(d - __base_date__).days for d in dates])
+
+def parse_date(arr: int| float | np.ndarray) -> dt.datetime | np.ndarray:
+    """
+    Converts an iterable of ints back into np.ndarray of datetime
+    :param arr:
+    :return:
+    """
+    if isinstance(arr, np.ndarray | list | pd.DatetimeIndex | pd.Series):
+        return __base_date__ + np.array([dt.timedelta(days=int(x)) for x in arr])
+    return __base_date__ + dt.timedelta(days=int(arr))
+
+
+# Auxiliary functions
+def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.datetime:
+    """
+    This function gets the nth weekday of a given year, month. Useful for IMM dates.
+    :param year:
+    :param month:
+    :param n:
+    :param weekday:
+    :return:
+    """
+    # weekday: Monday=0, Sunday=6
+    first_day = dt.datetime(year, month, 1)
+    days_until_weekday = (weekday - first_day.weekday() + 7) % 7
+    nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
+    return nth_weekday
+
+def next_imm_date(d: dt.datetime | dt.date, monthly=True):
+    """
+    This function gives closet the quarterly IMM date from a given date.
+    Optionally first shift input date d by x number of months specified by months
+    :param monthly:
+    :param d:
+    :return:
+    """
+    # Calculate the third Wednesday three months before the contract month
+    ansatz = d
+    if monthly:
+        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    else:
+        while ansatz.month not in [3, 6, 9, 12]:
+            ansatz += relativedelta(months=1)
+        ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+
+    if ansatz >= d:
+        return ansatz
+    if monthly:
+        ansatz += relativedelta(months=1)
+    else:
+        ansatz += relativedelta(months=3)
+    ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
+    return ansatz
 
 def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
     """
@@ -336,23 +341,4 @@ def time_it(func):
 
 
 if __name__ == '__main__':
-    # Check if a date is a business day
-    test_date = dt.date(2024, 6, 19)
-    print(f"Is {test_date} a SIFMA business day? {_SIFMA_.is_biz_day(test_date)}")
-    print(f"Previous business day before {test_date}: {_SIFMA_.prev_biz_day(test_date)}")
-    print(f"Next business day after {test_date}: {_SIFMA_.next_biz_day(test_date)}")
-
-    # Example usage
-    st = dt.datetime(2018, 4, 1)
-    et = dt.datetime(2024, 10, 9)
-    days = pd.date_range(st, et, freq='D')
-    for day in days:
-        if not _SIFMA_.is_biz_day(day):
-            if day.dayofweek < 5:
-                print(f"{day.date()} is not a SIFMA business day")
-
-    fomc_meetings = generate_fomc_meeting_dates(st, et)
-    print("FOMC Meeting Dates (Second Day) between {} and {}:".format(st, et))
-    for meeting in fomc_meetings:
-        print(meeting.strftime("%B %d, %Y"))
-
+    pass
