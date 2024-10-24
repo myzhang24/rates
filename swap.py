@@ -60,6 +60,7 @@ class SOFRSwap:
             reference_date = pd.Timestamp(reference_date).to_pydatetime()
             self.start_date = _SIFMA_.next_biz_day(reference_date, 2)
 
+        assert self.start_date >= self.reference_date   # Temporary stop for aged swaps
         # Getting maturity date right
         try:
             # If maturity_date is given as date
