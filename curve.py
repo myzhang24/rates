@@ -8,8 +8,22 @@ import matplotlib.dates as mdates
 from scipy.optimize import minimize, Bounds
 
 from fixing import _SOFR_, _FF_
-from date_util import _SIFMA_, convert_date, parse_date, generate_fomc_meeting_dates, time_it
-from math_util import _df, _last_published_value, _price_swap_rates, _calculate_stub_fixing, _create_overlap_matrix, _price_1m_futures, _price_3m_futures
+from date_util import (
+    _SIFMA_,
+    convert_date,
+    parse_date,
+    generate_fomc_meeting_dates,
+    time_it
+)
+from math_util import (
+    _df,
+    _last_published_value,
+    _price_swap_rates,
+    _calculate_stub_fixing,
+    _create_overlap_matrix,
+    _price_1m_futures,
+    _price_3m_futures
+)
 from swap import SOFRSwap
 from future import IRFuture, live_futures
 
@@ -584,147 +598,5 @@ def shock_curve(curve: USDCurve,
     return output_curve
 
 
-########################################################################################################################
-# Debug
-########################################################################################################################
-ff_prices = pd.Series({
-    "FFV4": 95.1725,
-    "FFX4": 95.33,
-    "FFZ4": 95.48,
-    "FFF5": 95.64,
-    "FFG5": 95.815,
-    "FFH5": 95.89,
-    "FFJ5": 96.015,
-    "FFK5": 96.125,
-    "FFM5": 96.21,
-    "FFN5": 96.30,
-    "FFQ5": 96.385,
-    "FFU5": 96.425,
-    "FFV5": 96.475
-})
-sofr_1m_prices = pd.Series({
-    "SERV4": 95.1525,
-    "SERX4": 95.310,
-    "SERZ4": 95.435,
-    "SERF5": 95.595,
-    "SERG5": 95.785,
-    "SERH5": 95.860,
-    "SERJ5": 95.985,
-    "SERK5": 96.095,
-    "SERM5": 96.175,
-    "SERN5": 96.265,
-    "SERQ5": 96.345,
-    "SERU5": 96.375,
-    "SERV5": 96.425
-}, name="SOFR1M")
-sofr_3m_prices = pd.Series({
-    "SFRU4": 95.2075,
-    "SFRZ4": 95.660,
-    "SFRH5": 96.025,
-    "SFRM5": 96.285,
-    "SFRU5": 96.45,
-    "SFRZ5": 96.550,
-    "SFRH6": 96.600,
-    "SFRM6": 96.62,
-    "SFRU6": 96.620,
-    "SFRZ6": 96.610,
-    "SFRH7": 96.605,
-    "SFRM7": 96.595,
-    "SFRU7": 96.590,
-    "SFRZ7": 96.575,
-    "SFRH8": 96.560,
-    "SFRM8": 96.545,
-    "SFRU8": 96.525,
-}, name="SOFR3M")
-sofr_swaps_rates = pd.Series({
-    "1W": 4.8400,
-    "2W": 4.84318,
-    "3W": 4.8455,
-    "1M": 4.8249,
-    "2M": 4.7530,
-    "3M": 4.6709,
-    "4M": 4.6020,
-    "5M": 4.5405,
-    "6M": 4.4717,
-    "7M": 4.41422,
-    "8M": 4.35880,
-    "9M": 4.3061,
-    "10M": 4.2563,
-    "11M": 4.2110,
-    "12M": 4.16675,
-    "18M": 3.9378,
-    "2Y": 3.81955,
-    "3Y": 3.6866,
-    "4Y": 3.61725,
-    "5Y": 3.5842,
-    "6Y": 3.5735,
-    "7Y": 3.5719,
-    "10Y": 3.5972,
-    "15Y": 3.6590,
-    "20Y": 3.6614,
-    "30Y": 3.51965
-})
-
-def debug_ff_calibration():
-    # FF
-    ff = USDCurve("FF", "2024-10-09")
-    ff.calibrate_future_curve(ff_prices)
-    print("Pricing errors in bps for FF futures:")
-    err = 1e2 * (ff.price_1m_futures(ff_prices.index) - ff_prices.values)
-    print(err)
-    ff.plot_effective_rates(10, 6)
-
-def debug_sofr1m_calibration():
-    # SOFR1M
-    sofr1m = USDCurve("SOFR", "2024-10-09")
-    sofr1m.calibrate_future_curve(sofr_1m_prices)
-    print("Pricing errors in bps for SOFR1M futures:")
-    err = 1e2 * (sofr1m.price_1m_futures(sofr_1m_prices.index) - sofr_1m_prices.values)
-    print(err)
-    sofr1m.plot_effective_rates(10, 6)
-
-def debug_sofr3m_calibration():
-    # SOFR3M
-    sofr3m = USDCurve("SOFR", "2024-10-09")
-    sofr3m.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
-    print("Pricing errors in bps for SOFR3M futures:")
-    err = 1e2 * (sofr3m.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
-    print(err)
-    sofr3m.plot_effective_rates(10, 6)
-
-def debug_sofr_calibration():
-    # SOFR1M and 3M
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(sofr_1m_prices, sofr_3m_prices)
-    print("Pricing errors in bps for SOFR1M futures:")
-    err = 1e2 * (sofr.price_1m_futures(sofr_1m_prices.index) - sofr_1m_prices.values)
-    print(err)
-    print("Pricing errors in bps for SOFR3M futures:")
-    err3 = 1e2 * (sofr.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
-    print(err3)
-    sofr.plot_effective_rates(10, 6)
-
-def debug_sofr_swap_calibration():
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_swap_curve(sofr_swaps_rates)
-    print("Pricing errors in bps for swaps")
-    print(1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values))
-    sofr.plot_swap_zero_rates()
-
-def debug_sofr_swap_calibration_with_convexity():
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_swap_curve_with_convexity(sofr_3m_prices, sofr_swaps_rates)
-    print("Pricing errors in bps for swaps")
-    print(1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values))
-    sofr.plot_swap_zero_rates()
-
-    sofr.calculate_sofr_future_swap_spread()
-    sofr.plot_sofr_future_swap_spread()
-
-
-# Example usage
 if __name__ == '__main__':
-    # debug_sofr_swap_calibration()
-    debug_sofr_swap_calibration_with_convexity()
-    exit(0)
-
+    pass
