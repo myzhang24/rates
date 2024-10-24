@@ -9,7 +9,7 @@ import matplotlib.ticker as ticker
 
 from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_util import get_nth_weekday_of_month, next_imm_date, day_count
-from curve import USDCurve, price_3m_futures
+from curve import USDCurve
 from math_util import _implied_normal_vol, _normal_greek
 
 ########################################################################################################################
@@ -179,7 +179,7 @@ def parse_option_data(market_data: pd.Series, curve: USDCurve) -> dict:
         if fut_ticker in curve.market_data["SOFR3M"].index:
             fut_price = curve.market_data["SOFR3M"][fut_ticker]
         else:
-            fut_price = price_3m_futures(curve, [fut_ticker]).squeeze()
+            fut_price = curve.price_3m_futures([fut_ticker]).squeeze()
         df["underlying_price"] = fut_price
 
         # Add OTM column

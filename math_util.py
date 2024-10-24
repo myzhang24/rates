@@ -1,7 +1,164 @@
 import numpy as np
 from scipy.special import ndtr
 from scipy.optimize import least_squares
+from scipy.interpolate import CubicSpline
+from date_util import parse_date
+from fixing import FixingManager
 
+
+# Pricing functions
+def _create_overlap_matrix(start_end_dates: np.ndarray,
+                           knot_dates: np.ndarray) -> np.ndarray:
+    """
+    This function creates overlap matrix, how many calendar days is each future exposed to each meeting-to-meeting period
+    :param start_end_dates:
+    :param knot_dates:
+    :return:
+    """
+    knot_ends = np.roll(knot_dates, -1) - 1
+    knot_ends[-1] = 1_000_000
+    starts = np.maximum(start_end_dates[:, 0].reshape(-1, 1), knot_dates.reshape(1, -1))
+    ends = np.minimum(start_end_dates[:, 1].reshape(-1, 1), knot_ends.reshape(1, -1))
+    return np.maximum(0, ends - starts + 1)
+
+def _calculate_stub_fixing(ref_date: float,
+                           start_end_dates: np.ndarray,
+                           fixing: FixingManager,
+                           multiplicative=False,
+                           ) -> (float, np.ndarray):
+    """
+    This function calculates the stub fixing. Returns overnight rate and the stub fixing sum or accrual
+    :param multiplicative:
+    :param ref_date:
+    :param start_end_dates:
+    :return:
+    """
+    res = np.ones((start_end_dates.shape[0]), ) if multiplicative else np.zeros((start_end_dates.shape[0]), )
+    for i in range(start_end_dates.shape[0]):
+        start, end = start_end_dates[i, :]
+        if start >= ref_date:
+            pass
+        fixings = 1e-2 * fixing.get_fixings_asof(parse_date(start), parse_date(ref_date-1))
+        if multiplicative:
+            res[i] = (1 + fixings / 360.0).prod()
+        else:
+            res[i] = fixings.sum()
+    on = 1e-2 * fixing.get_fixings_asof(parse_date(ref_date-4), parse_date(ref_date-1)).iloc[-1]
+    return on, res
+
+def _price_1m_futures(future_knot_values: np.ndarray,
+                      overlap_matrix: np.ndarray,
+                      stub_fixings: np.ndarray,
+                      n_days: np.ndarray) -> np.ndarray:
+    """
+    This function calculates 1m future prices. Low level numpy function.
+    :param n_days:
+    :param overlap_matrix:
+    :param stub_fixings:
+    :param future_knot_values:
+    :return:
+    """
+    rate_sum = np.matmul(overlap_matrix, future_knot_values.reshape(-1, 1)).squeeze()
+    rate_sum += stub_fixings
+    return 1e2 * (1 - rate_sum / n_days)
+
+def _price_3m_futures(future_knot_values: np.ndarray,
+                      overlap_matrix: np.ndarray,
+                      stub_fixings: np.ndarray,
+                      n_days: np.ndarray) -> np.ndarray:
+    """
+    This function calculates 3m future prices. Low-level numpy function
+    :param n_days:
+    :param overlap_matrix:
+    :param stub_fixings:
+    :param future_knot_values:
+    :return:
+    """
+
+    rate_prod = np.exp(np.matmul(overlap_matrix, np.log(1 + future_knot_values.reshape(-1, 1) / 360.0)).squeeze())
+    rate_prod *= stub_fixings
+    rate_avg = 360.0 * (rate_prod - 1) / n_days
+    return 1e2 * (1 - rate_avg)
+
+def _sum_partitions(arr: np.ndarray, partitions: np.ndarray):
+    """
+    This function sums a lists of entries in arr according to partition given by part
+    :param arr:
+    :param partitions:
+    :return:
+    """
+    indices = np.r_[0, np.cumsum(partitions)[:-1]]
+    result = np.add.reduceat(arr, indices)
+    return result
+
+def _df(ref_date: float, dates: np.ndarray, knot_dates: np.ndarray, knot_values: np.ndarray):
+    """
+    Compute df using cubic spline interpolation on zero coupon rate knots. Low level numpy function.
+    :param dates:
+    :param knot_dates:
+    :param knot_values:
+    :param ref_date:
+    :return:
+    """
+    cs = CubicSpline(knot_dates, knot_values, extrapolate=False)
+    zero_rates = cs(dates)
+    zero_rates[dates < knot_dates[0]] = knot_values[0]
+    zero_rates[dates > knot_dates[-1]] = knot_values[-1]
+    t_vect = (dates - ref_date) / 360.0
+    return np.exp(-zero_rates * t_vect)
+
+def _price_swap_rates(swap_knot_values: np.ndarray,
+                      ref_date: float,
+                      swap_knot_dates: np.ndarray,
+                      schedules: np.ndarray,
+                      dcfs: np.ndarray,
+                      partitions: np.ndarray
+                      ) -> np.ndarray:
+    """
+    This function evaluates par rates for swaps. Low level numpy function.
+    :param dcfs:
+    :param ref_date:
+    :param partitions:
+    :param swap_knot_values:
+    :param swap_knot_dates:
+    :param schedules:
+    :return:
+    """
+    dfs = _df(ref_date, schedules, swap_knot_dates, swap_knot_values)
+    numerators = (dfs[:, 0] / dfs[:, 1] - 1) * dfs[:, 2]  # fwd_i * df_i
+    numerators = _sum_partitions(numerators, partitions)
+    denominators = dcfs * dfs[:, 2]  # dcf_i * df_i
+    denominators = _sum_partitions(denominators, partitions)
+    rates = 1e2 * numerators / denominators
+    return rates
+
+# For discrete OIS compounding df
+def _last_published_value(reference_dates: np.ndarray,
+                          knot_dates: np.ndarray,
+                          knot_values: np.ndarray) -> np.ndarray:
+    """
+    This function looks up reference_values for reference_dates according to knot_dates, knot_values
+    :param reference_dates:
+    :param knot_dates:
+    :param knot_values:
+    :return:
+    """
+    indices = np.searchsorted(knot_dates, reference_dates, side='right') - 1
+    indices = np.clip(indices, 0, len(knot_values) - 1)
+    return knot_values[indices]
+
+def _ois_compound(reference_dates: np.ndarray,
+                  reference_rates: np.ndarray):
+    """
+    This function computes the compounded OIS rate given the fixing
+    :param reference_dates:
+    :param reference_rates:
+    :return:
+    """
+    num_days = np.diff(reference_dates)
+    rates = reference_rates[:-1]
+    annualized_rate = np.prod(1 + rates * num_days / 360) - 1
+    return 360 * annualized_rate / num_days.sum()
 
 def _normal_price(dc: float | np.ndarray,
                   t2e: float | np.ndarray,
