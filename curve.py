@@ -547,15 +547,56 @@ class USDCurve:
         swaps = [SOFRSwap(self.reference_date, tenor=x) for x in tenors]
         return self.price_swap_rates(swaps)
 
+    def is_stub(self, ind) -> np.ndarray:
+        """
+        Returns whether a list of future tickers are stub (start date < reference date)
+        """
+        return np.array([IRFuture(x).reference_start_date < self.reference_date for x in ind])
+
     def shock_swap_curve_with_convexity(self):
         """
         This method shocks the swap curve with minimal amount to preserve the convexity
         :return:
         """
+        old_knot_values = self._swap_knot_values.copy()
         initial_knot_values = self._swap_knot_values.copy()
+        convexity_scalar = self.convexity_model
+        knot_dates = self._swap_knot_dates
+        ref_date = convert_date(self.reference_date)
 
         # Get 3M future prices
-        fut_3m = self.market_data.get("SOFR3M", pd.Series())
+        fut_3m = self.market_data["SOFR3M"]
+        fut_3m = fut_3m.loc[~self.is_stub(fut_3m.index)]
+        fut_3m_rates = 1e2 - fut_3m.values.squeeze()
+        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in fut_3m.index]
+        fra = [SOFRSwap(self.reference_date, x, y) for x, y in fut_st_et]
+        schedules = [swap.get_float_leg_schedule(True).values for swap in fra]
+        partition = np.array([len(x) for x in schedules])
+        schedule_block = np.concatenate(schedules, axis=0)
+        schedules = schedule_block[:, :-1]
+        dcfs = schedule_block[:, -1].squeeze()
+
+        # Convexity adjust
+        fwd_ness = 1/360 * (convert_date(np.array(fut_st_et)[:, 0]) - ref_date)
+        convexity_adj = fwd_ness * convexity_scalar
+        fra_rates = fut_3m_rates - convexity_adj
+
+        def objective_function(knot_values: np.ndarray):
+            swap_rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
+            err = np.sum((swap_rates - fra_rates) ** 2)
+            err += 1e2 * np.sum((knot_values - old_knot_values) ** 2)
+            return err
+
+        # Initial values
+        bounds = Bounds(0.0, 0.08)
+        res = minimize(objective_function,
+                       initial_knot_values,
+                       method="L-BFGS-B",
+                       bounds=bounds)
+
+        # Set curve status
+        self._swap_knot_values = res.x
+        return self
 
     def shock_future_curve_with_convexity(self):
         pass
