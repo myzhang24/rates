@@ -374,30 +374,29 @@ class USDCurve:
                            initial_values,
                            method="SLSQP",
                            bounds=bounds)
-
-            # Set curve status
             self._swap_knot_values = res.x[1:]
-            self.market_data["SOFRSwaps"] = spot_rates
-            return self
+        else:
+            initial_values = 0.05 * np.ones_like(self._swap_knot_values)
+            conv = convexity.values.squeeze()
+            assert conv.shape == fut_rates.shape
+            mkt_rates = np.concatenate([fut_rates - conv, mkt_rates])
+            def loss_function(knot_values: np.array) -> float:
+                rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
+                loss = np.sum((rates - mkt_rates) ** 2)
+                loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+                return loss
 
-        initial_values = 0.05 * np.ones_like(self._swap_knot_values)
-        conv = convexity.values.squeeze()
-        assert conv.shape == fut_rates.shape
-        mkt_rates = np.concatenate([fut_rates - conv, mkt_rates])
-        def loss_function(knot_values: np.array) -> float:
-            rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
-            loss = np.sum((rates - mkt_rates) ** 2)
-            loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
-            return loss
+            bounds = Bounds(0.0, 0.08)
+            res = minimize(loss_function,
+                           initial_values,
+                           method="SLSQP",
+                           bounds=bounds)
+            # Set curve status
+            self._swap_knot_values = res.x
 
-        bounds = Bounds(0.0, 0.08)
-        res = minimize(loss_function,
-                       initial_values,
-                       method="SLSQP",
-                       bounds=bounds)
-        # Set curve status
-        self._swap_knot_values = res.x
+        fra_rates = _price_swap_rates(self._swap_knot_values, ref_date, knot_dates, schedules, dcfs, partition)[:n_fut]
         self.market_data["SOFRSwaps"] = spot_rates
+        self.future_swap_spread = pd.Series(fut_rates - fra_rates, index=fut_3m.index)
         return self
 
     @time_it
@@ -502,7 +501,7 @@ class USDCurve:
         self._effective_rates = res.x
         return self
 
-    def calculate_sofr_future_swap_spread(self, reprice=True):
+    def calculate_future_swap_spread(self, reprice=True):
         """
         This function uses curve to evaluate future prices as well as equivalent swap rates.
         :return:
@@ -610,7 +609,7 @@ class USDCurve:
         # Get 3M future prices
         fut_3m = self.market_data["SOFR3M"]
         fut_3m = fut_3m.loc[~self.is_stub(fut_3m.index)]
-        assert fut_3m.index == self.future_swap_spread.index
+        assert np.all(fut_3m.index == self.future_swap_spread.index)
         fut_3m_rates = 1e2 - fut_3m.values.squeeze()
         fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in fut_3m.index]
         fra = [SOFRSwap(self.reference_date, x, y) for x, y in fut_st_et]
@@ -626,19 +625,19 @@ class USDCurve:
         def objective_function(knot_values: np.ndarray):
             swap_rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
             err = np.sum((swap_rates - fra_rates) ** 2)
-            err += 1e2 * np.sum((knot_values - old_knot_values) ** 2)
+            # err += np.sum((knot_values - old_knot_values) ** 2)
             return err
 
         # Initial values
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_knot_values,
-                       method="L-BFGS-B",
+                       method="SLSQP",
                        bounds=bounds)
 
         # Set curve status
         self._swap_knot_values = res.x
-        self.calculate_sofr_future_swap_spread()
+        self.calculate_future_swap_spread()
         return self
 
     def shock_future_curve_with_convexity(self):
@@ -666,6 +665,8 @@ def shock_curve(curve: USDCurve,
     :return:
     """
     output_curve = curve
+    if output_curve.future_swap_spread.empty:
+        output_curve.calculate_future_swap_spread(True)
     if new_curve:
         output_curve = deepcopy(curve)
     if shock_target.lower() == "zero_rate":

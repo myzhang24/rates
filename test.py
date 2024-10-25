@@ -189,7 +189,7 @@ def debug_sofr_future_swap_convexity():
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(sofr_1m_prices, sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
-    sofr.calculate_sofr_future_swap_spread()
+    sofr.calculate_future_swap_spread()
     convexity = sofr.future_swap_spread
     assert np.round(convexity.abs().sum(), 2) == 0.67
     sofr.plot_sofr_future_swap_spread()
@@ -215,10 +215,12 @@ def debug_sofr_swap_calibration_with_convexity2():
 def debug_shock_swap():
     from curve import USDCurve, shock_curve
     sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(sofr_1m_prices, sofr_3m_prices)
-    sofr.calibrate_swap_curve_with_convexity(sofr_3m_prices, sofr_swaps_rates)
-    # sofr = shock_curve(sofr, 2.0, "effective_rate", False, True)
-    print(0)
+    sofr.calibrate_future_curve(sofr_3m_prices)
+    sofr.calibrate_swap_curve_with_convexity(sofr_swaps_rates, "linear")
+    sofr.plot_sofr_future_swap_spread()
+    sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
+    sofr.plot_sofr_future_swap_spread()
+
 
 if __name__ == '__main__':
     # debug_sifma_holidays()
@@ -231,6 +233,6 @@ if __name__ == '__main__':
     # debug_sofr_swap_calibration()
     # debug_sofr_future_swap_convexity()
     # debug_sofr_swap_calibration_with_convexity()
-    debug_sofr_swap_calibration_with_convexity2()
-    # debug_shock_swap()
+    # debug_sofr_swap_calibration_with_convexity2()
+    debug_shock_swap()
 
