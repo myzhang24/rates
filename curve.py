@@ -333,6 +333,7 @@ class USDCurve:
         ref_date = convert_date(self.reference_date)
         fut_3m = self.market_data["SOFR3M"]
         fut_3m = fut_3m.loc[~self.is_stub(fut_3m.index)]
+        n_fut = len(fut_3m)
         fut_st_et = [IRFuture(fut).get_reference_start_end_dates() for fut in fut_3m.index]
         fut_swaps = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
         fut_rates = 1e2 - fut_3m.values.squeeze()
@@ -357,7 +358,6 @@ class USDCurve:
             initial_values = 0.05 * np.ones(self._swap_knot_values.shape[0] + 1) # First two are
             initial_values[0] = 0.02
             fwd_ness = 1/360 * np.array([convert_date(IRFuture(fut).reference_start_date) - ref_date for fut in fut_3m.index])
-            n_fut = len(fwd_ness)
 
             def loss_function(knot_values: np.array) -> float:
                 rates = _price_swap_rates(knot_values[1:], ref_date, knot_dates, schedules, dcfs, partition)
@@ -394,9 +394,9 @@ class USDCurve:
             # Set curve status
             self._swap_knot_values = res.x
 
-        fra_rates = _price_swap_rates(self._swap_knot_values, ref_date, knot_dates, schedules, dcfs, partition)[:n_fut]
+        fra = _price_swap_rates(self._swap_knot_values, ref_date, knot_dates, schedules, dcfs, partition)[:n_fut]
         self.market_data["SOFRSwaps"] = spot_rates
-        self.future_swap_spread = pd.Series(fut_rates - fra_rates, index=fut_3m.index)
+        self.future_swap_spread = pd.Series(fut_rates - fra, index=fut_3m.index)
         return self
 
     @time_it
