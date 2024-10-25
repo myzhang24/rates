@@ -125,6 +125,21 @@ sofr_swaps_rates = pd.Series({
     "20Y": 3.6614,
     "30Y": 3.51965
 })
+sofr_swaps_long = pd.Series({
+    "2M": 4.7530,
+    "1Y": 4.16675,
+    "2Y": 3.81955,
+    "3Y": 3.6866,
+    "4Y": 3.61725,
+    "5Y": 3.5842,
+    "6Y": 3.5735,
+    "7Y": 3.5719,
+    "10Y": 3.5972,
+    "15Y": 3.6590,
+    "20Y": 3.6614,
+    "25Y": 3.5984,
+    "30Y": 3.51965
+})
 
 def debug_ff_calibration():
     from curve import USDCurve
@@ -183,17 +198,19 @@ def debug_sofr_swap_calibration_with_convexity():
     from curve import USDCurve
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(sofr_3m_prices)
-    sofr.calibrate_swap_curve_with_convexity(sofr_swaps_rates, "linear")
-    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values)
-    assert np.abs(err).sum() < 6
+    sofr.calibrate_swap_curve_with_convexity(sofr_swaps_long, "linear")
+    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
+    assert np.abs(err).sum() < 1
 
 def debug_sofr_swap_calibration_with_convexity2():
     from curve import USDCurve
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(sofr_3m_prices)
-    sofr.calibrate_swap_curve_with_convexity(sofr_swaps_rates, "linear")
+    convexity = pd.Series(1e-2 * np.array([0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 11]),
+                          index=range(16))
+    sofr.calibrate_swap_curve_with_convexity(sofr_swaps_rates, convexity)
     err = 1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values)
-    assert np.abs(err).sum() < 6
+    assert np.abs(err).max() < 0.4
 
 def debug_shock_swap():
     from curve import USDCurve, shock_curve
@@ -213,6 +230,7 @@ if __name__ == '__main__':
     # debug_sofr_joint_calibration()
     # debug_sofr_swap_calibration()
     # debug_sofr_future_swap_convexity()
-    debug_sofr_swap_calibration_with_convexity()
+    # debug_sofr_swap_calibration_with_convexity()
+    debug_sofr_swap_calibration_with_convexity2()
     # debug_shock_swap()
 

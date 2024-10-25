@@ -340,7 +340,7 @@ class USDCurve:
         swaps = fut_swaps + spot_swaps
         mkt_rates = spot_rates.values.squeeze()
 
-        self.initialize_swap_knots(spot_swaps)
+        self.initialize_swap_knots(swaps)
 
         # Now we generate and merge the schedule array into a huge one with partition recorded.
         schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
@@ -351,7 +351,9 @@ class USDCurve:
         knot_dates = self._swap_knot_dates
 
         # If use linear model convexity which will be solved for
-        if convexity == "linear":
+        if isinstance(convexity, str):
+            if not convexity == "linear":
+                raise Exception("Only linear model of convexity is implemented")
             initial_values = 0.05 * np.ones(self._swap_knot_values.shape[0] + 1) # First two are
             initial_values[0] = 0.02
             fwd_ness = 1/360 * np.array([convert_date(IRFuture(fut).reference_start_date) - ref_date for fut in fut_3m.index])
@@ -381,7 +383,7 @@ class USDCurve:
         initial_values = 0.05 * np.ones_like(self._swap_knot_values)
         conv = convexity.values.squeeze()
         assert conv.shape == fut_rates.shape
-        mkt_rates = np.concatenate([fut_rates + conv, mkt_rates])
+        mkt_rates = np.concatenate([fut_rates - conv, mkt_rates])
         def loss_function(knot_values: np.array) -> float:
             rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
             loss = np.sum((rates - mkt_rates) ** 2)
@@ -391,7 +393,7 @@ class USDCurve:
         bounds = Bounds(0.0, 0.08)
         res = minimize(loss_function,
                        initial_values,
-                       method="L-BFGS-B",
+                       method="SLSQP",
                        bounds=bounds)
         # Set curve status
         self._swap_knot_values = res.x
