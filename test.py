@@ -231,9 +231,11 @@ def debug_shock_swap():
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
-    sofr.plot_sofr_future_swap_spread()
-    # sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
-    # sofr.plot_sofr_future_swap_spread()
+    old_convexity = sofr.future_swap_spread.values.squeeze()
+    sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
+    new_convexity = sofr.future_swap_spread.values.squeeze()
+    err = 1e2 * (old_convexity - new_convexity)
+    assert np.abs(err).max() < 0.2
 
 def test_runner():
     total_tests = 0

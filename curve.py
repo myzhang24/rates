@@ -576,42 +576,47 @@ class USDCurve:
         This assumes that convexity has been computed via calculate_sofr_future_swap_spread
         :return:
         """
-        old_knot_values = self._swap_knot_values.copy()
-        initial_knot_values = self._swap_knot_values.copy()
         knot_dates = self._swap_knot_dates
+        knot_values = self._swap_knot_values
         ref_date = convert_date(self.reference_date)
 
         # Get 3M future prices
-        fut_3m = self.market_data["SOFR3M"]
-        fut_3m = fut_3m.loc[~self.is_stub(fut_3m.index)]
-        assert np.all(fut_3m.index == self.future_swap_spread.index)
-        fut_3m_rates = 1e2 - fut_3m.values.squeeze()
-        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in fut_3m.index]
-        fra = [SOFRSwap(self.reference_date, x, y) for x, y in fut_st_et]
+        fut_name = "SOFR3M" if self.rate_name == "SOFR" else "FF"
+        futs = self.market_data[fut_name]
+        futs = futs.loc[~self.is_stub(futs.index)]
+        assert np.all(futs.index == self.future_swap_spread.index)
+
+        fut_rates = 1e2 - futs.values.squeeze()
+        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in futs.index]
+        fra = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
         schedules = [swap.get_float_leg_schedule(True).values for swap in fra]
         partition = np.array([len(x) for x in schedules])
         schedule_block = np.concatenate(schedules, axis=0)
         schedules = schedule_block[:, :-1]
         dcfs = schedule_block[:, -1].squeeze()
+        fra_rates = fut_rates - self.future_swap_spread.values.squeeze()
 
-        # Convexity adjust
-        fra_rates = fut_3m_rates - self.future_swap_spread.values.squeeze()
-
-        def objective_function(knot_values: np.ndarray):
-            swap_rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
+        # Find the index until which swap zero rates needs to be shocked to match convexity
+        i = knot_dates.searchsorted(schedules[:, 1].max()) + 1
+        old_knot_values = knot_values[:i]
+        initial_knot_values = old_knot_values.copy()
+        knot_value_holder = knot_values.copy()
+        def objective_function(ansatz: np.ndarray):
+            knot_value_holder[:i] = ansatz
+            swap_rates = _price_swap_rates(knot_value_holder, ref_date, knot_dates, schedules, dcfs, partition)
             err = np.sum((swap_rates - fra_rates) ** 2)
-            # err += np.sum((knot_values - old_knot_values) ** 2)
+            err += 1e2 * np.sum(np.diff(knot_value_holder) ** 2)
             return err
 
         # Initial values
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_knot_values,
-                       method="SLSQP",
+                       method="L-BFGS-B",
                        bounds=bounds)
 
         # Set curve status
-        self._swap_knot_values = res.x
+        self._swap_knot_values = np.concatenate([res.x, knot_values[i:]])
         self.calculate_future_swap_spread()
         return self
 
