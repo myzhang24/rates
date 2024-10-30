@@ -1,8 +1,13 @@
 import datetime as dt
 import numpy as np
 import pandas as pd
+
+import sys
+import inspect
+import time
 import logging
 logging.basicConfig(level=logging.INFO)
+
 
 def debug_sifma_holidays():
     from date_util import _SIFMA_
@@ -212,27 +217,44 @@ def debug_sofr_swap_calibration_with_convexity2():
     err = 1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values)
     assert np.abs(err).max() < 0.4
 
-def debug_shock_swap():
-    from curve import USDCurve, shock_curve
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(sofr_3m_prices)
-    sofr.calibrate_swap_curve(sofr_swaps_rates, "linear")
-    sofr.plot_sofr_future_swap_spread()
-    sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
-    # sofr.plot_sofr_future_swap_spread()
+# def debug_shock_swap():
+#     from curve import USDCurve, shock_curve
+#     sofr = USDCurve("SOFR", "2024-10-09")
+#     sofr.calibrate_future_curve(sofr_3m_prices)
+#     sofr.calibrate_swap_curve(sofr_swaps_rates, "linear")
+#     sofr.plot_sofr_future_swap_spread()
+#     sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
+#     # sofr.plot_sofr_future_swap_spread()
 
+
+def test_runner():
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = 0
+
+    # Get the current module
+    current_module = sys.modules[__name__]
+
+    # Iterate over all members of the module
+    for name, obj in inspect.getmembers(current_module):
+        # Check if the member is a function and is not the test_runner itself
+        if inspect.isfunction(obj) and obj.__module__ == current_module.__name__ and name != 'test_runner':
+            total_tests += 1
+            try:
+                st = time.perf_counter()
+                obj()
+                passed_tests += 1
+                elapsed_time = time.perf_counter() - st
+                logging.info(f"{name}: Passed in {elapsed_time:.3f} seconds")
+            except AssertionError as e:
+                failed_tests += 1
+                logging.info(f"{name}: Failed - {e}")
+            except Exception as e:
+                failed_tests += 1
+                logging.info(f"{name}: Error - {e}")
+
+    logging.info(f"Total tests: {total_tests}, Passed: {passed_tests}, Failed: {failed_tests}")
 
 if __name__ == '__main__':
-    # debug_sifma_holidays()
-    # debug_fomc_generation()
-    # debug_date_conversion()
-    # debug_ff_calibration()
-    # debug_sofr1m_calibration()
-    # debug_sofr3m_calibration()
-    # debug_sofr_joint_calibration()
-    # debug_sofr_swap_calibration()
-    # debug_sofr_future_swap_convexity()
-    # debug_sofr_swap_calibration_with_convexity()
-    # debug_sofr_swap_calibration_with_convexity2()
-    debug_shock_swap()
+    test_runner()
 
