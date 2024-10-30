@@ -337,7 +337,7 @@ class USDCurve:
             bounds = Bounds(0.0, 0.08)
             res = minimize(loss_function,
                            initial_values,
-                           method="SLSQP",
+                           method="L-BFGS-B",
                            bounds=bounds)
             self._swap_knot_values = res.x[1:]
         else:

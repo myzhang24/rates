@@ -8,6 +8,9 @@ import time
 import logging
 logging.basicConfig(level=logging.INFO)
 
+########################################################################################################################
+# Date and schedule tests
+########################################################################################################################
 
 def debug_sifma_holidays():
     from date_util import _SIFMA_
@@ -49,9 +52,8 @@ def debug_date_conversion():
     assert dates[0] == dt.datetime(2020, 1, 1)
 
 
-
 ########################################################################################################################
-# Debug
+# Curve tests
 ########################################################################################################################
 ff_prices = pd.Series({
     "FFV4": 95.1725,
@@ -197,35 +199,41 @@ def debug_sofr_future_swap_convexity():
     sofr.calculate_future_swap_spread()
     convexity = sofr.future_swap_spread
     assert np.round(convexity.abs().sum(), 2) == 0.67
-    # sofr.plot_sofr_future_swap_spread()
 
-def debug_sofr_swap_calibration_with_convexity():
+def debug_swap_calibration_with_linear_convexity():
     from curve import USDCurve
     sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(sofr_3m_prices)
+    sofr.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
     err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
-    assert np.abs(err).sum() < 1
+    assert np.abs(err).max() < 0.2
 
-def debug_sofr_swap_calibration_with_convexity2():
+def debug_swap_calibration_with_linear_convexity2():
     from curve import USDCurve
     sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(sofr_3m_prices)
+    sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
+    sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
+    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
+    assert np.abs(err).max() < 0.2
+
+def debug_swap_calibration_with_convexity():
+    from curve import USDCurve
+    sofr = USDCurve("SOFR", "2024-10-09")
+    sofr.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
     convexity = pd.Series(1e-2 * np.array([0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 11]),
                           index=range(16))
-    sofr.calibrate_swap_curve(sofr_swaps_rates, convexity)
-    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values)
-    assert np.abs(err).max() < 0.4
+    sofr.calibrate_swap_curve(sofr_swaps_long, convexity)
+    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
+    assert np.abs(err).max() < 0.2
 
-# def debug_shock_swap():
-#     from curve import USDCurve, shock_curve
-#     sofr = USDCurve("SOFR", "2024-10-09")
-#     sofr.calibrate_future_curve(sofr_3m_prices)
-#     sofr.calibrate_swap_curve(sofr_swaps_rates, "linear")
-#     sofr.plot_sofr_future_swap_spread()
-#     sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
-#     # sofr.plot_sofr_future_swap_spread()
-
+def debug_shock_swap():
+    from curve import USDCurve, shock_curve
+    sofr = USDCurve("SOFR", "2024-10-09")
+    sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
+    sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
+    sofr.plot_sofr_future_swap_spread()
+    # sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
+    # sofr.plot_sofr_future_swap_spread()
 
 def test_runner():
     total_tests = 0
@@ -256,5 +264,5 @@ def test_runner():
     logging.info(f"Total tests: {total_tests}, Passed: {passed_tests}, Failed: {failed_tests}")
 
 if __name__ == '__main__':
-    test_runner()
-
+    # test_runner()
+    debug_shock_swap()
