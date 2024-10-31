@@ -133,7 +133,6 @@ sofr_swaps_rates = pd.Series({
     "30Y": 3.51965
 })
 sofr_swaps_long = pd.Series({
-    "2M": 4.7530,
     "1Y": 4.16675,
     "2Y": 3.81955,
     "3Y": 3.6866,
@@ -171,7 +170,6 @@ def debug_sofr3m_calibration():
     sofr3m.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
     err = 1e2 * (sofr3m.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
     assert np.abs(err).sum() < 2
-
 
 def debug_sofr_joint_calibration():
     from curve import USDCurve
@@ -235,7 +233,7 @@ def debug_shock_swap():
     sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
     new_convexity = sofr.future_swap_spread.values.squeeze()
     err = 1e2 * (old_convexity - new_convexity)
-    assert np.abs(err).max() < 0.2
+    assert np.abs(err).max() < 0.1
 
 def test_runner():
     total_tests = 0
@@ -267,4 +265,4 @@ def test_runner():
 
 if __name__ == '__main__':
     # test_runner()
-    debug_shock_swap()
+    debug_swap_calibration_with_linear_convexity2()

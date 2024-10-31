@@ -275,6 +275,11 @@ class USDCurve:
         mkt_rates = spot_rates.values.squeeze()
         swaps = spot_swaps
 
+        # Load overnight rate
+        fomc = 1e-2 if self.is_fomc else 1
+        on = 1e-2 * _SOFR_.get_fixings_asof(self.reference_date, self.reference_date)
+        on = 360 * np.log(1 + on / 360) # convert overnight rate to zero rate
+
         # Dummy initiation if no convexity
         futs = pd.Series()
         fut_rates = np.array([])
@@ -309,6 +314,7 @@ class USDCurve:
                 rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
                 loss = np.sum((rates - mkt_rates) ** 2)
                 loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+                loss += fomc * 1e4 * (on - knot_values[0]) ** 2
                 return loss
 
             bounds = Bounds(0.0, 0.08)
@@ -341,7 +347,7 @@ class USDCurve:
                            bounds=bounds)
             self._swap_knot_values = res.x[1:]
         else:
-
+            # This is the case where we manually set convexity
             if isinstance(convexity, np.ndarray):
                 conv = convexity.squeeze()
             elif isinstance(convexity, pd.Series):
@@ -362,7 +368,7 @@ class USDCurve:
             bounds = Bounds(0.0, 0.08)
             res = minimize(loss_function,
                            initial_values,
-                           method="SLSQP",
+                           method="L-BFGS-B",
                            args=(mkt_rates,),
                            bounds=bounds)
             self._swap_knot_values = res.x
@@ -579,6 +585,8 @@ class USDCurve:
         knot_dates = self._swap_knot_dates
         knot_values = self._swap_knot_values
         ref_date = convert_date(self.reference_date)
+        fomc = 1e-2 if self.is_fomc else 1
+        on = 1e-2 * _SOFR_.get_fixings_asof(self.reference_date, self.reference_date)
 
         # Get 3M future prices
         fut_name = "SOFR3M" if self.rate_name == "SOFR" else "FF"
@@ -597,26 +605,23 @@ class USDCurve:
         fra_rates = fut_rates - self.future_swap_spread.values.squeeze()
 
         # Find the index until which swap zero rates needs to be shocked to match convexity
-        i = knot_dates.searchsorted(schedules[:, 1].max()) + 1
-        old_knot_values = knot_values[:i]
-        initial_knot_values = old_knot_values.copy()
-        knot_value_holder = knot_values.copy()
+        initial_value = knot_values.copy()
         def objective_function(ansatz: np.ndarray):
-            knot_value_holder[:i] = ansatz
-            swap_rates = _price_swap_rates(knot_value_holder, ref_date, knot_dates, schedules, dcfs, partition)
+            swap_rates = _price_swap_rates(ansatz, ref_date, knot_dates, schedules, dcfs, partition)
             err = np.sum((swap_rates - fra_rates) ** 2)
-            err += 1e2 * np.sum(np.diff(knot_value_holder) ** 2)
+            err += 1e2 * np.sum(np.diff(ansatz - knot_values) ** 2)
+            err += 1e4 * fomc * (on - ansatz[0]) ** 2
             return err
 
         # Initial values
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
-                       initial_knot_values,
+                       initial_value,
                        method="L-BFGS-B",
                        bounds=bounds)
 
         # Set curve status
-        self._swap_knot_values = np.concatenate([res.x, knot_values[i:]])
+        self._swap_knot_values = res.x
         self.calculate_future_swap_spread()
         return self
 
