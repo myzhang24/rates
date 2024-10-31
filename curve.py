@@ -363,7 +363,7 @@ class USDCurve:
             bounds = Bounds(0.0, 0.08)
             res = minimize(loss_function,
                            initial_values,
-                           method="L-BFGS-B",
+                           method="SLSQP",
                            args=(mkt_rates,),
                            bounds=bounds)
             self._swap_knot_values = res.x
@@ -601,7 +601,7 @@ class USDCurve:
         bounds = Bounds(0.0, 0.08)
         res = minimize(objective_function,
                        initial_value,
-                       method="L-BFGS-B",
+                       method="SLSQP",
                        bounds=bounds)
 
         # Set curve status
@@ -641,7 +641,7 @@ def shock_curve(curve: USDCurve,
     if shock_target.lower() == "zero_rate":
         output_curve.shock_zero_rate(shock_amount, shock_type)
         if preserve_convexity:
-            output_curve.shock_swap_curve_with_convexity()
+            output_curve.shock_future_curve_with_convexity()
     elif shock_target.lower() == "effective_rate":
         output_curve.shock_effective_rate(shock_amount, shock_type)
         if preserve_convexity:

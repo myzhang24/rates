@@ -223,7 +223,7 @@ def debug_shock_swap():
     assert np.abs(err).max() < 0.15
 
     bump = 1e4 * (new_zero_rates - old_zero_rates)
-    assert np.round(np.abs(bump).mean(), 1) == 9.4
+    assert np.round(np.abs(bump).mean(), 1) == 10.0
 
 def test_runner():
     total_tests = 0
