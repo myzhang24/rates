@@ -225,6 +225,24 @@ def debug_shock_swap():
     bump = 1e4 * (new_zero_rates - old_zero_rates)
     assert np.round(np.abs(bump).mean(), 1) == 10.0
 
+def debug_shock_future():
+    from curve import USDCurve, shock_curve
+    sofr = USDCurve("SOFR", "2024-10-09")
+    sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
+    sofr.calibrate_swap_curve(sofr_swaps_rates)
+    old_effr = sofr._effective_rates
+    sofr.calculate_future_swap_spread()
+    old_convexity = sofr.future_swap_spread.values.squeeze()
+
+    sofr = shock_curve(sofr, "zero_rate", 10, "additive_bps", True)
+    new_convexity = sofr.future_swap_spread.values.squeeze()
+    new_effr = sofr._effective_rates
+    err = 1e2 * (old_convexity - new_convexity)
+    assert np.abs(err).max() < 0.33
+
+    bump = 1e4 * (new_effr - old_effr)
+    assert np.round(np.abs(bump).mean(), 1) == 10.0
+
 def test_runner():
     total_tests = 0
     passed_tests = 0

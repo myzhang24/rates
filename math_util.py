@@ -4,6 +4,7 @@ from scipy.optimize import least_squares
 from scipy.interpolate import CubicSpline
 from date_util import parse_date
 from fixing import FixingManager, past_discount
+from swap import SOFRSwap
 
 
 # Pricing functions
@@ -79,6 +80,19 @@ def _price_3m_futures(future_knot_values: np.ndarray,
     rate_prod *= stub_fixings
     rate_avg = 360.0 * (rate_prod - 1) / n_days
     return 1e2 * (1 - rate_avg)
+
+def _prepare_swap_batch_price(swaps: list[SOFRSwap]) -> (np.ndarray, np.ndarray, np.ndarray):
+    """
+    This function returns the schedule block, a dcf block and a partition array
+    :param swaps:
+    :return:
+    """
+    schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
+    partition = np.array([len(x) for x in schedules])
+    schedule_block = np.concatenate(schedules, axis=0)
+    schedules = schedule_block[:, :-1]
+    dcfs = schedule_block[:, -1].squeeze()
+    return schedules, dcfs, partition
 
 def _sum_partitions(arr: np.ndarray, partitions: np.ndarray):
     """

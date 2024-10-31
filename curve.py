@@ -17,11 +17,12 @@ from date_util import (
 from math_util import (
     _df,
     _last_published_value,
+    _prepare_swap_batch_price,
     _price_swap_rates,
     _calculate_stub_fixing,
     _create_overlap_matrix,
     _price_1m_futures,
-    _price_3m_futures
+    _price_3m_futures,
 )
 from swap import SOFRSwap
 from future import IRFuture, live_futures
@@ -95,6 +96,13 @@ class USDCurve:
         return self
 
     def shock_effective_rate(self, value, shock_type: str, reprice=True):
+        """
+        This method shocks the effective rate
+        :param value:
+        :param shock_type:
+        :param reprice:
+        :return:
+        """
         if shock_type.lower() == "additive_bps":
             self._effective_rates += value * 1e-4
         elif shock_type.lower() == "replace_%":
@@ -106,6 +114,13 @@ class USDCurve:
         return self
 
     def shock_zero_rate(self, value, shock_type: str, reprice=True):
+        """
+        This method shocks the swap zero rate
+        :param value:
+        :param shock_type:
+        :param reprice:
+        :return:
+        """
         if shock_type.lower() == "additive_bps":
             self._swap_knot_values += value * 1e-4
         elif shock_type.lower() == "replace_%":
@@ -165,6 +180,7 @@ class USDCurve:
         """
         dfs = _df(convert_date(self.reference_date), dates, self._swap_knot_dates, self._swap_knot_values)
         ref_date = convert_date(self.reference_date)
+        # we along the very first date to be in the past to indicate an aged swap
         if dates[0] < ref_date:
             dfs[0] = past_discount(dates[0], ref_date, self.rate_name)
         return dfs
@@ -251,7 +267,8 @@ class USDCurve:
         """
         # Initialize future knots
         if last_meeting_date is None:
-            last_meeting_date = self.reference_date + relativedelta(years=2)
+            last_meeting_date = self.reference_date + relativedelta(years=4)
+
         meeting_dates = generate_fomc_meeting_dates(self.reference_date, last_meeting_date)
         effective_dates = [_SIFMA_.next_biz_day(x, 1) for x in meeting_dates]
         next_biz_day = _SIFMA_.next_biz_day(self.reference_date, 0)
@@ -275,13 +292,17 @@ class USDCurve:
         # Initialize knots for swaps
         next_biz_day = _SIFMA_.next_biz_day(self.reference_date, 0)
         knot_dates = sorted([swap.maturity_date for swap in swaps])
-        knot_dates = np.array([next_biz_day] + knot_dates)
+        if next_biz_day not in knot_dates:
+            knot_dates = np.array([next_biz_day] + knot_dates)
         self._swap_knot_dates = convert_date(knot_dates)
         self._swap_knot_values = 0.05 * np.ones((len(knot_dates),))
         return self
 
     # @time_it
-    def calibrate_swap_curve(self, spot_rates: pd.Series, convexity: pd.Series | np.ndarray = None):
+    def calibrate_swap_curve(self,
+                             spot_rates: pd.Series,
+                             convexity: pd.Series | np.ndarray = None,
+                             on_penalty: bool = True):
         """
         This function calibrates a swap curve's zero rate knots to prices swaps according to an input market
         :param convexity:
@@ -290,12 +311,12 @@ class USDCurve:
         """
         # Initialize swap knots
         ref_date = convert_date(self.reference_date)
-        spot_swaps = [SOFRSwap(self.reference_date, tenor=x) for x in spot_rates.index]
+        spot_swaps = [self.make_swap(x) for x in spot_rates.index]
         mkt_rates = spot_rates.values.squeeze()
         swaps = spot_swaps
 
         # Load overnight rate
-        fomc = 1e-2 if self.is_fomc else 1
+        fomc = 0 if not on_penalty else 1e-2 if self.is_fomc else 1  # adjustment of penalization of overnight jumps in optimization
         on = 1e-2 * _SOFR_.get_fixings_asof(self.reference_date, self.reference_date)
         on = 360 * np.log(1 + on / 360) # convert overnight rate to zero rate
 
@@ -306,6 +327,7 @@ class USDCurve:
 
         # If convexity, then price futures
         if convexity is not None:
+            # Normalize convexity input
             if isinstance(convexity, np.ndarray):
                 conv = convexity.squeeze()
             elif isinstance(convexity, pd.Series):
@@ -321,52 +343,34 @@ class USDCurve:
             fut_swaps = [self.make_swap(x) for x in futs.index]
             swaps = fut_swaps + spot_swaps
 
+            # set fra target rate
             fut_rates = 1e2 - futs.values.squeeze()
             assert conv.shape == fut_rates.shape
             fra_rates = fut_rates -  conv
             mkt_rates = np.concatenate([fra_rates, mkt_rates])
 
+        # Make sure there is enough knots
         self.initialize_swap_knots(swaps)
 
         # Now we generate and merge the schedule array into a huge one with partition recorded.
-        schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
-        partition = np.array([len(x) for x in schedules])
-        schedule_block  = np.concatenate(schedules, axis=0)
-        schedules = schedule_block[:, :-1]
-        dcfs = schedule_block[:, -1].squeeze()
+        schedules, dcfs, partition = _prepare_swap_batch_price(swaps)
         knot_dates = self._swap_knot_dates
+        initial_values = 0.05 * np.ones_like(knot_dates)
 
-        initial_values = 0.05 * np.ones_like(self._swap_knot_values)
 
-        if convexity is None:
-            def loss_function(knot_values: np.array) -> float:
-                rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
-                loss = np.sum((rates - mkt_rates) ** 2)
-                loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
-                loss += fomc * 1e4 * (on - knot_values[0]) ** 2
-                return loss
+        def loss_function(knot_values: np.array) -> float:
+            rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
+            loss = np.sum((rates - mkt_rates) ** 2)
+            loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
+            loss += fomc * 1e4 * (on - knot_values[0]) ** 2
+            return loss
 
-            bounds = Bounds(0.0, 0.08)
-            res = minimize(loss_function,
-                           initial_values,
-                           method="L-BFGS-B",
-                           bounds=bounds)
-            self._swap_knot_values = res.x
-        else:
-            def loss_function(knot_values: np.ndarray, mkt: np.ndarray):
-                rates = _price_swap_rates(knot_values, ref_date, knot_dates, schedules, dcfs, partition)
-                loss = np.sum((rates - mkt) ** 2)
-                loss += 1e2 * np.sum(np.diff(knot_values) ** 2)
-                loss += fomc * 1e4 * (on - knot_values[0]) ** 2
-                return loss
-
-            bounds = Bounds(0.0, 0.08)
-            res = minimize(loss_function,
-                           initial_values,
-                           method="SLSQP",
-                           args=(mkt_rates,),
-                           bounds=bounds)
-            self._swap_knot_values = res.x
+        bounds = Bounds(0.0, 0.08)
+        res = minimize(loss_function,
+                       initial_values,
+                       method="L-BFGS-B" if convexity is None else "SLSQP",
+                       bounds=bounds)
+        self._swap_knot_values = res.x
 
         # Set curve status
         self.market_data["SOFRSwaps"] = spot_rates
@@ -376,16 +380,20 @@ class USDCurve:
         return self
 
     # @time_it
-    def calibrate_future_curve(self, futures_1m_prices: pd.Series=None, futures_3m_prices: pd.Series=None):
+    def calibrate_future_curve(self,
+                               futures_1m_prices: pd.Series=None,
+                               futures_3m_prices: pd.Series=None,
+                               on_penalty: bool=True):
         """
         This function calibrates the sofr futures curve to the 1m and 3m futures prices
+        :param on_penalty:
         :param futures_1m_prices:
         :param futures_3m_prices:
         :return:
         """
         # Create the futures
         ref_date = convert_date(self.reference_date)
-        fomc = 1e-2 if self.is_fomc else 1.0
+        fomc = 0 if not on_penalty else 1e-2 if self.is_fomc else 1.0
         end_date = self.reference_date
         if futures_1m_prices is not None:
             end_date = max(end_date, IRFuture(futures_1m_prices.index[-1]).reference_end_date)
@@ -482,16 +490,15 @@ class USDCurve:
         This function uses curve to evaluate future prices as well as equivalent swap rates.
         :return:
         """
-        assert self.rate_name == "SOFR"
+        rate_name = "SOFR3M" if self.rate_name == "SOFR" else "FF"
         if reprice:
             self.reprice_futures()
-        fut_3m = self.market_data["SOFR3M"]
+        fut = self.market_data[rate_name]
 
-        fut_rates = 1e2 - fut_3m.values.squeeze()
-        fut_st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in fut_3m.index])
-        fut_st_et[:, 1] += 1    # This is because the end day is one day before IMM, which needs to be accrued.
-        forward_rates = 1e2 * self.forward_rates(fut_st_et[:, 0], fut_st_et[:, 1])
-        df = pd.Series(fut_rates - forward_rates, index=fut_3m.index)
+        fut_rates = 1e2 - fut.values.squeeze()
+        fra = [self.make_swap(x) for x in fut.index]
+        fra_rates = self.price_swap_rates(fra)
+        df = pd.Series(fut_rates - fra_rates, index=fut.index)
         self.future_swap_spread = df
         return self
 
@@ -542,11 +549,7 @@ class USDCurve:
         :return:
         """
         ref_date = convert_date(self.reference_date)
-        schedules = [swap.get_float_leg_schedule(True).values for swap in swaps]
-        partition = np.array([len(x) for x in schedules])
-        schedule_block = np.concatenate(schedules, axis=0)
-        schedules = schedule_block[:, :-1]
-        dcfs = schedule_block[:, -1].squeeze()
+        schedules, dcfs, partition = _prepare_swap_batch_price(swaps)
         return _price_swap_rates(self._swap_knot_values,
                                  ref_date,
                                  self._swap_knot_dates,
@@ -561,7 +564,7 @@ class USDCurve:
         :param tenors:
         :return:
         """
-        swaps = [SOFRSwap(self.reference_date, tenor=x) for x in tenors]
+        swaps = [self.make_swap(x) for x in tenors]
         return self.price_swap_rates(swaps)
 
     def shock_swap_curve_with_convexity(self):
@@ -574,19 +577,18 @@ class USDCurve:
         knot_values = self._swap_knot_values
         ref_date = convert_date(self.reference_date)
 
-        # Get 3M future prices
+        # Make sure convexity is calculated
         fut_name = "SOFR3M" if self.rate_name == "SOFR" else "FF"
         futs = self.market_data[fut_name]
-        assert np.all(futs.index == self.future_swap_spread.index)
+        if self.future_swap_spread is None:
+            self.calculate_future_swap_spread()
+        if not np.all(futs.index == self.future_swap_spread.index):
+            self.calculate_future_swap_spread()
 
+        # Get 3M future prices
         fut_rates = 1e2 - futs.values.squeeze()
-        fut_st_et = [IRFuture(x).get_reference_start_end_dates() for x in futs.index]
-        fra = [SOFRSwap(self.reference_date, x, y + dt.timedelta(days=1)) for x, y in fut_st_et]
-        schedules = [swap.get_float_leg_schedule(True).values for swap in fra]
-        partition = np.array([len(x) for x in schedules])
-        schedule_block = np.concatenate(schedules, axis=0)
-        schedules = schedule_block[:, :-1]
-        dcfs = schedule_block[:, -1].squeeze()
+        fra = [self.make_swap(x) for x in futs.index]
+        schedules, dcfs, partition = _prepare_swap_batch_price(fra)
         fra_rates = fut_rates - self.future_swap_spread.values.squeeze()
 
         # Find the index until which swap zero rates needs to be shocked to match convexity
@@ -606,11 +608,38 @@ class USDCurve:
 
         # Set curve status
         self._swap_knot_values = res.x
-        self.calculate_future_swap_spread()
+        fra_rates = _price_swap_rates(res.x, ref_date, knot_dates, schedules, dcfs, partition)
+        self.future_swap_spread = pd.Series(fut_rates - fra_rates, index=futs.index)
         return self
 
     def shock_future_curve_with_convexity(self):
-        pass
+        """
+        This function re-calibrates the future curve using 3m futures priced using swap curve and convexity
+        :return:
+        """
+        # Make sure convexity is calculated
+        fut_name = "SOFR3M" if self.rate_name == "SOFR" else "FF"
+        futs = live_futures(self.reference_date, fut_name)
+        if self.future_swap_spread is None:
+            self.calculate_future_swap_spread()
+        if self.future_swap_spread.index.to_list() != futs:
+            self.calculate_future_swap_spread()
+
+        # Make FRAs
+        fras = [self.make_swap(x) for x in futs]
+        fra_rates = self.price_swap_rates(fras)
+        fut_rates = fra_rates + self.future_swap_spread.values.squeeze()
+
+        # Recalibrate future curve
+        fut_pxs = pd.Series(1e2 - fut_rates, index=futs)
+        if fut_name == "SOFR3M":
+            self.calibrate_future_curve(futures_3m_prices=fut_pxs, on_penalty=False)
+        else:
+            self.calibrate_future_curve(futures_1m_prices=fut_pxs, on_penalty=False)
+
+        self.calculate_future_swap_spread()
+        return self
+
 
 ########################################################################################################################
 # External functionalities
