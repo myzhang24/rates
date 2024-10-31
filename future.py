@@ -1,6 +1,7 @@
 import datetime as dt
 
 from dateutil.relativedelta import relativedelta
+from numba.cuda.cudadrv.devicearray import lru_cache
 from pandas.tseries.offsets import MonthEnd
 from date_util import get_nth_weekday_of_month, next_imm_date
 
@@ -34,6 +35,7 @@ _QUARTERLY_CODE_TO_MONTH_ = {
 ########################################################################################################################
 # Future utilities
 ########################################################################################################################
+@lru_cache
 def parse_future_ticker(ticker: str,
                         ref_date=dt.datetime.now()) -> (str, dt.datetime, dt.datetime):
     ticker = ticker.upper()
@@ -85,6 +87,7 @@ def parse_future_ticker(ticker: str,
     return fut_type, start_date, end_date
 
 
+@lru_cache
 def live_futures(date: dt.datetime, future: str = "sofr3m"):
     """
     Generates live future tickers (BBG) as of a given date

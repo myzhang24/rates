@@ -52,15 +52,16 @@ def _price_1m_futures(future_knot_values: np.ndarray,
                       stub_fixings: np.ndarray,
                       n_days: np.ndarray) -> np.ndarray:
     """
-    This function calculates 1m future prices. Low level numpy function.
-    :param n_days:
-    :param overlap_matrix:
-    :param stub_fixings:
-    :param future_knot_values:
-    :return:
+    Optimized function to calculate 1m future prices.
     """
-    rate_sum = np.matmul(overlap_matrix, future_knot_values.reshape(-1, 1)).squeeze()
+
+    # Perform matrix-vector multiplication directly without reshape
+    rate_sum = overlap_matrix @ future_knot_values
+
+    # Add stub fixings
     rate_sum += stub_fixings
+
+    # Calculate the final result
     return 1e2 * (1 - rate_sum / n_days)
 
 def _price_3m_futures(future_knot_values: np.ndarray,
@@ -68,17 +69,22 @@ def _price_3m_futures(future_knot_values: np.ndarray,
                       stub_fixings: np.ndarray,
                       n_days: np.ndarray) -> np.ndarray:
     """
-    This function calculates 3m future prices. Low-level numpy function
-    :param n_days:
-    :param overlap_matrix:
-    :param stub_fixings:
-    :param future_knot_values:
-    :return:
+    Optimized function to calculate 3m future prices.
     """
 
-    rate_prod = np.exp(np.matmul(overlap_matrix, np.log(1 + future_knot_values.reshape(-1, 1) / 360.0)).squeeze())
+    # Pre-compute log-transformed future values divided by 360
+    log_future_values = np.log1p(future_knot_values / 360.0)  # log1p(x) is more precise for small x
+
+    # Matrix multiplication and exponentiation in a single step
+    rate_prod = np.exp(overlap_matrix @ log_future_values)
+
+    # Apply stub fixings element-wise
     rate_prod *= stub_fixings
+
+    # Calculate the average rate
     rate_avg = 360.0 * (rate_prod - 1) / n_days
+
+    # Return the final result
     return 1e2 * (1 - rate_avg)
 
 def _prepare_swap_batch_price(swaps: list[SOFRSwap]) -> (np.ndarray, np.ndarray, np.ndarray):

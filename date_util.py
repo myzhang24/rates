@@ -17,7 +17,7 @@ from dateutil.relativedelta import relativedelta
 import time
 import logging
 logging.basicConfig(level=logging.INFO)
-from functools import wraps
+from functools import wraps, lru_cache
 
 
 # Use 1904 date format
@@ -122,6 +122,7 @@ class SIFMACalendar(AbstractHolidayCalendar):
         super().__init__()
         self.holiday_set = self.holidays(start='1990-01-01', end='2060-12-31')
 
+    @lru_cache
     def is_biz_day(self, d: dt.datetime | dt.date) -> bool:
         if isinstance(d, dt.date):
             dt.datetime(d.year, d.month, d.day)
@@ -149,7 +150,7 @@ class SIFMACalendar(AbstractHolidayCalendar):
 
 _SIFMA_ = SIFMACalendar()
 
-
+@lru_cache
 def adjust_date(date, convention):
     if convention == 'Following':
         adjusted_date = _SIFMA_.next_biz_day(date, 0)
@@ -177,6 +178,7 @@ def modified_preceding(date):
         return _SIFMA_.next_biz_day(date, 0)
     return candidate
 
+@lru_cache
 def day_count(st: dt.datetime | dt.date, et: dt.datetime | dt.date, convention="ACT/360"):
     if convention == "ACT/360":
         return (et-st).days / 360
@@ -220,6 +222,7 @@ def parse_date(arr: int| float | np.ndarray) -> dt.datetime | np.ndarray:
 
 
 # Auxiliary functions
+@lru_cache
 def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.datetime:
     """
     This function gets the nth weekday of a given year, month. Useful for IMM dates.
@@ -235,6 +238,7 @@ def get_nth_weekday_of_month(year: int, month: int, n: int, weekday: int) -> dt.
     nth_weekday = first_day + pd.Timedelta(days=days_until_weekday) + pd.Timedelta(weeks=n - 1)
     return nth_weekday
 
+@lru_cache
 def next_imm_date(d: dt.datetime | dt.date, monthly=True):
     """
     This function gives closet the quarterly IMM date from a given date.
@@ -261,6 +265,7 @@ def next_imm_date(d: dt.datetime | dt.date, monthly=True):
     ansatz = get_nth_weekday_of_month(ansatz.year, ansatz.month, 3, 2)
     return ansatz
 
+@lru_cache
 def generate_fomc_meeting_dates(start_date: dt.datetime, end_date: dt.datetime):
     """
     Generates FOMC meeting dates within the given date range.

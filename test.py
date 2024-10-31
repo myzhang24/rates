@@ -150,7 +150,7 @@ def debug_ff_calibration():
     from curve import USDCurve
     # FF
     ff = USDCurve("FF", "2024-10-09")
-    ff.calibrate_future_curve(ff_prices)
+    ff.calibrate_future_curve(ff_prices, on_penalty=False)
     err = 1e2 * (ff.price_1m_futures(ff_prices.index) - ff_prices.values)
     assert np.abs(err).sum() < 2
 
@@ -273,3 +273,5 @@ def test_runner():
 
 if __name__ == '__main__':
     test_runner()
+
+

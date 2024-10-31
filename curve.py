@@ -379,7 +379,6 @@ class USDCurve:
             self.future_swap_spread = pd.Series(fut_rates - fra, index=futs.index)
         return self
 
-    # @time_it
     def calibrate_future_curve(self,
                                futures_1m_prices: pd.Series=None,
                                futures_3m_prices: pd.Series=None,
