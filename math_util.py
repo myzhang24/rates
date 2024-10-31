@@ -3,7 +3,7 @@ from scipy.special import ndtr
 from scipy.optimize import least_squares
 from scipy.interpolate import CubicSpline
 from date_util import parse_date
-from fixing import FixingManager
+from fixing import FixingManager, past_discount
 
 
 # Pricing functions
@@ -27,7 +27,7 @@ def _calculate_stub_fixing(ref_date: float,
                            multiplicative=False,
                            ) -> (float, np.ndarray):
     """
-    This function calculates the stub fixing. Returns overnight rate and the stub fixing sum or accrual
+    This function calculates the stub fixings. Returns overnight rate and the stub fixings sum or accrual
     :param multiplicative:
     :param ref_date:
     :param start_end_dates:
@@ -125,6 +125,8 @@ def _price_swap_rates(swap_knot_values: np.ndarray,
     :return:
     """
     dfs = _df(ref_date, schedules, swap_knot_dates, swap_knot_values)
+    if schedules[0, 0] < ref_date:
+        dfs[0, 0] = past_discount(schedules[0, 0], ref_date)    # If first swap is stub
     numerators = (dfs[:, 0] / dfs[:, 1] - 1) * dfs[:, 2]  # fwd_i * df_i
     numerators = _sum_partitions(numerators, partitions)
     denominators = dcfs * dfs[:, 2]  # dcf_i * df_i
@@ -150,7 +152,7 @@ def _last_published_value(reference_dates: np.ndarray,
 def _ois_compound(reference_dates: np.ndarray,
                   reference_rates: np.ndarray):
     """
-    This function computes the compounded OIS rate given the fixing
+    This function computes the compounded OIS rate given the fixings
     :param reference_dates:
     :param reference_rates:
     :return:

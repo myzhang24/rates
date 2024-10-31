@@ -102,7 +102,6 @@ sofr_3m_prices = pd.Series({
     "SFRZ7": 96.575,
     "SFRH8": 96.560,
     "SFRM8": 96.545,
-    "SFRU8": 96.525,
 }, name="SOFR3M")
 sofr_swaps_rates = pd.Series({
     "1W": 4.8400,
@@ -196,23 +195,7 @@ def debug_sofr_future_swap_convexity():
     sofr.calibrate_swap_curve(sofr_swaps_rates)
     sofr.calculate_future_swap_spread()
     convexity = sofr.future_swap_spread
-    assert np.round(convexity.abs().sum(), 2) == 0.67
-
-def debug_swap_calibration_with_linear_convexity():
-    from curve import USDCurve
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
-    sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
-    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
-    assert np.abs(err).max() < 0.2
-
-def debug_swap_calibration_with_linear_convexity2():
-    from curve import USDCurve
-    sofr = USDCurve("SOFR", "2024-10-09")
-    sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
-    sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
-    err = 1e2 * (sofr.price_spot_rates(sofr_swaps_long.index) - sofr_swaps_long.values)
-    assert np.abs(err).max() < 0.2
+    assert np.round(convexity.abs().sum(), 2) == 0.57
 
 def debug_swap_calibration_with_convexity():
     from curve import USDCurve
@@ -228,12 +211,19 @@ def debug_shock_swap():
     from curve import USDCurve, shock_curve
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
-    sofr.calibrate_swap_curve(sofr_swaps_long, "linear")
+    sofr.calibrate_swap_curve(sofr_swaps_rates)
+    old_zero_rates = sofr._swap_knot_values
+    sofr.calculate_future_swap_spread()
     old_convexity = sofr.future_swap_spread.values.squeeze()
+
     sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
     new_convexity = sofr.future_swap_spread.values.squeeze()
+    new_zero_rates = sofr._swap_knot_values
     err = 1e2 * (old_convexity - new_convexity)
-    assert np.abs(err).max() < 0.1
+    assert np.abs(err).max() < 0.15
+
+    bump = 1e4 * (new_zero_rates - old_zero_rates)
+    assert np.round(np.abs(bump).mean(), 1) == 9.4
 
 def test_runner():
     total_tests = 0
@@ -264,5 +254,4 @@ def test_runner():
     logging.info(f"Total tests: {total_tests}, Passed: {passed_tests}, Failed: {failed_tests}")
 
 if __name__ == '__main__':
-    # test_runner()
-    debug_swap_calibration_with_linear_convexity2()
+    test_runner()

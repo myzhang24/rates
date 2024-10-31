@@ -95,7 +95,7 @@ def live_futures(date: dt.datetime, future: str = "sofr3m"):
     live_tickers = []
     if future.lower() == "sofr3m":
         start = date if date == next_imm_date(date, False) else next_imm_date(date - relativedelta(months=3), False)
-        for i in range(17):
+        for i in range(16):
             month_code = _MONTH_TO_CODE_[start.month]
             live_tickers.append(f"SFR{month_code}{str(start.year)[-1]}")
             start = next_imm_date(start + relativedelta(months=1), False)
