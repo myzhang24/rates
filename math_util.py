@@ -38,7 +38,7 @@ def _calculate_stub_fixing(ref_date: float,
     for i in range(start_end_dates.shape[0]):
         start, end = start_end_dates[i, :]
         if start >= ref_date:
-            pass
+            continue
         fixings = 1e-2 * fixing.get_fixings_asof(parse_date(start), parse_date(ref_date-1))
         if multiplicative:
             res[i] = (1 + fixings / 360.0).prod()

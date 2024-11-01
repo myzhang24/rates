@@ -44,6 +44,8 @@ class USDCurve:
         self._swap_knot_dates = None
         self._swap_knot_values = None
 
+        self.initialize_future_knots(self.reference_date + relativedelta(years=4))
+
     def get_effective_rates(self):
         return pd.Series(np.round(1e2 * self._effective_rates, 4),
                          index=pd.DatetimeIndex(parse_date(self._fomc_effective_dates)),
@@ -323,7 +325,7 @@ class USDCurve:
         # Initialize swap knots
         ref_date = convert_date(self.reference_date)
         spot_swaps = [self.make_swap(x) for x in spot_rates.index]
-        mkt_rates = spot_rates.values.squeeze()
+        mkt_rates = spot_rates.values
         swaps = spot_swaps
 
         # Load overnight rate
@@ -339,12 +341,7 @@ class USDCurve:
         # If convexity, then price futures
         if convexity is not None:
             # Normalize convexity input
-            if isinstance(convexity, np.ndarray):
-                conv = convexity.squeeze()
-            elif isinstance(convexity, pd.Series):
-                conv = convexity.values.squeeze()
-            else:
-                raise Exception("Convexity must be None, or a pd.Series or a numpy array")
+            conv = convexity.ravel() if isinstance(convexity, np.ndarray) else convexity.values
 
             # Reprice futures
             self.reprice_futures()
@@ -355,7 +352,7 @@ class USDCurve:
             swaps = fut_swaps + spot_swaps
 
             # set fra target rate
-            fut_rates = 1e2 - futs.values.squeeze()
+            fut_rates = 1e2 - futs.values
             assert conv.shape == fut_rates.shape
             fra_rates = fut_rates -  conv
             mkt_rates = np.concatenate([fra_rates, mkt_rates])
@@ -404,13 +401,6 @@ class USDCurve:
         # Create the futures
         ref_date = convert_date(self.reference_date)
         fomc = 0 if not on_penalty else 1e-2 if self.is_fomc else 1.0
-        end_date = self.reference_date
-        if futures_1m_prices is not None:
-            end_date = max(end_date, IRFuture(futures_1m_prices.index[-1]).reference_end_date)
-        if futures_3m_prices is not None:
-            end_date = max(end_date, IRFuture(futures_3m_prices.index[-1]).reference_end_date)
-        assert end_date > self.reference_date
-        self.initialize_future_knots(end_date)
 
         # Null initiation
         def objective_function_1m(knot_values: np.ndarray,
@@ -430,9 +420,9 @@ class USDCurve:
         # If 1m futures are present
         if futures_1m_prices is not None:
             futures_1m = [IRFuture(x) for x in futures_1m_prices.index]
-            px_1m = futures_1m_prices.values.squeeze()
+            px_1m = futures_1m_prices.values
             fut_start_end_1m = np.array([convert_date(fut.get_reference_start_end_dates()) for fut in futures_1m])
-            days_1m = (np.diff(fut_start_end_1m, axis=1) + 1).squeeze()
+            days_1m = (np.diff(fut_start_end_1m, axis=1) + 1).ravel()
             on, stubs_1m = _calculate_stub_fixing(ref_date, fut_start_end_1m, _SOFR_ if "sofr" in self.rate_name.lower() else _FF_, False)
             o_matrix_1m = _create_overlap_matrix(fut_start_end_1m, self._fomc_effective_dates).astype(float)
 
@@ -450,9 +440,9 @@ class USDCurve:
         # If 3m futures are present
         if futures_3m_prices is not None:
             futures_3m = [IRFuture(x) for x in futures_3m_prices.index]
-            px_3m = futures_3m_prices.values.squeeze()
+            px_3m = futures_3m_prices.values
             fut_start_end_3m = np.array([convert_date(fut.get_reference_start_end_dates()) for fut in futures_3m])
-            days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).squeeze()
+            days_3m = (np.diff(fut_start_end_3m, axis=1) + 1).ravel()
             on, stubs_3m = _calculate_stub_fixing(ref_date, fut_start_end_3m, _SOFR_,True)
             o_matrix_3m = _create_overlap_matrix(fut_start_end_3m, self._fomc_effective_dates).astype(float)
 
@@ -488,7 +478,7 @@ class USDCurve:
                        initial_knot_values,
                        args=(o_matrix_1m, stubs_1m, days_1m, px_1m,
                              o_matrix_3m, stubs_3m, days_3m, px_3m),
-                       method="L-BFGS-B",
+                       method="SLSQP",
                        bounds=bounds)
 
         # Set curve status
@@ -505,7 +495,7 @@ class USDCurve:
             self.reprice_futures()
         fut = self.market_data[rate_name]
 
-        fut_rates = 1e2 - fut.values.squeeze()
+        fut_rates = 1e2 - fut.values
         fra = [self.make_swap(x) for x in fut.index]
         fra_rates = self.price_swap_rates(fra)
         df = pd.Series(fut_rates - fra_rates, index=fut.index)
@@ -530,7 +520,7 @@ class USDCurve:
         o_matrix = _create_overlap_matrix(st_et, self._fomc_effective_dates)
         knot_values = self._effective_rates
         _, stubs = _calculate_stub_fixing(ref_date, st_et, fixing_manager, False)
-        n_days = (np.diff(st_et, axis=1) + 1).squeeze()
+        n_days = (np.diff(st_et, axis=1) + 1).ravel()
         return _price_1m_futures(knot_values, o_matrix, stubs, n_days)
 
     def price_3m_futures(self, futures_3m: list[str] | np.ndarray[str]) -> np.ndarray:
@@ -549,7 +539,7 @@ class USDCurve:
         st_et = np.array([convert_date(IRFuture(x).get_reference_start_end_dates()) for x in futures_3m])
         o_matrix = _create_overlap_matrix(st_et, self._fomc_effective_dates)
         _, stubs = _calculate_stub_fixing(ref_date, st_et, _SOFR_,True)
-        n_days = (np.diff(st_et, axis=1) + 1).squeeze()
+        n_days = (np.diff(st_et, axis=1) + 1).ravel()
         return _price_3m_futures(self._effective_rates, o_matrix, stubs, n_days)
 
     def price_swap_rates(self, swaps: list[SOFRSwap]) -> np.ndarray:
@@ -596,10 +586,10 @@ class USDCurve:
             self.calculate_future_swap_spread()
 
         # Get 3M future prices
-        fut_rates = 1e2 - futs.values.squeeze()
+        fut_rates = 1e2 - futs.values
         fra = [self.make_swap(x) for x in futs.index]
         schedules, dcfs, partition = _prepare_swap_batch_price(fra)
-        fra_rates = fut_rates - self.future_swap_spread.values.squeeze()
+        fra_rates = fut_rates - self.future_swap_spread.values
 
         # Find the index until which swap zero rates needs to be shocked to match convexity
         initial_value = knot_values.copy()
@@ -638,7 +628,7 @@ class USDCurve:
         # Make FRAs
         fras = [self.make_swap(x) for x in futs]
         fra_rates = self.price_swap_rates(fras)
-        fut_rates = fra_rates + self.future_swap_spread.values.squeeze()
+        fut_rates = fra_rates + self.future_swap_spread.values
 
         # Recalibrate future curve
         fut_pxs = pd.Series(1e2 - fut_rates, index=futs)

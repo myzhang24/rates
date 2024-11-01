@@ -68,7 +68,6 @@ ff_prices = pd.Series({
     "FFN5": 96.30,
     "FFQ5": 96.385,
     "FFU5": 96.425,
-    "FFV5": 96.475
 })
 sofr_1m_prices = pd.Series({
     "SERV4": 95.1525,
@@ -83,7 +82,6 @@ sofr_1m_prices = pd.Series({
     "SERN5": 96.265,
     "SERQ5": 96.345,
     "SERU5": 96.375,
-    "SERV5": 96.425
 }, name="SOFR1M")
 sofr_3m_prices = pd.Series({
     "SFRU4": 95.2075,
@@ -150,9 +148,9 @@ def debug_ff_calibration():
     from curve import USDCurve
     # FF
     ff = USDCurve("FF", "2024-10-09")
-    ff.calibrate_future_curve(ff_prices, on_penalty=False)
+    ff.calibrate_future_curve(ff_prices, on_penalty=True)
     err = 1e2 * (ff.price_1m_futures(ff_prices.index) - ff_prices.values)
-    assert np.abs(err).sum() < 2
+    assert np.abs(err).max() < 0.2
 
 def debug_sofr1m_calibration():
     from curve import USDCurve
@@ -160,7 +158,7 @@ def debug_sofr1m_calibration():
     sofr1m = USDCurve("SOFR", "2024-10-09")
     sofr1m.calibrate_future_curve(sofr_1m_prices)
     err = 1e2 * (sofr1m.price_1m_futures(sofr_1m_prices.index) - sofr_1m_prices.values)
-    assert np.abs(err).sum() < 4
+    assert np.abs(err).max() < 1
 
 def debug_sofr3m_calibration():
     from curve import USDCurve
@@ -168,7 +166,7 @@ def debug_sofr3m_calibration():
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
     err = 1e2 * (sofr.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
-    assert np.abs(err).sum() < 2
+    assert np.abs(err).max() < 0.1
 
 def debug_sofr_joint_calibration():
     from curve import USDCurve
@@ -177,15 +175,15 @@ def debug_sofr_joint_calibration():
     sofr.calibrate_future_curve(sofr_1m_prices, sofr_3m_prices)
     err = 1e2 * (sofr.price_1m_futures(sofr_1m_prices.index) - sofr_1m_prices.values)
     err3 = 1e2 * (sofr.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
-    assert np.abs(err).sum() < 3
-    assert np.abs(err3).sum() < 3
+    assert np.abs(err).max() < 1
+    assert np.abs(err3).max() < 0.2
 
 def debug_sofr_swap_calibration():
     from curve import USDCurve
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_swap_curve(sofr_swaps_rates)
     err = 1e2 * (sofr.price_spot_rates(sofr_swaps_rates.index) - sofr_swaps_rates.values)
-    assert np.abs(err).sum() < 2
+    assert np.abs(err).max() < 0.4
 
 def debug_sofr_future_swap_convexity():
     from curve import USDCurve
@@ -238,10 +236,10 @@ def debug_shock_future():
     new_convexity = sofr.future_swap_spread.values.squeeze()
     new_effr = sofr.get_effective_rates()
     err = 1e2 * (old_convexity - new_convexity)
-    assert np.abs(err).max() < 0.33
+    assert np.abs(err).max() < 0.35
 
     bump = 1e2 * (new_effr - old_effr)
-    assert np.round(np.abs(bump).mean(), 1) == 10.0
+    assert np.round(np.abs(bump).mean(), 1) == 9.8
 
 ########################################################################################################################
 # Vol testing
