@@ -1,6 +1,7 @@
 import datetime as dt
 import numpy as np
 import pandas as pd
+from copy import deepcopy
 import re
 from dateutil.relativedelta import relativedelta
 from scipy.interpolate import CubicSpline
@@ -10,7 +11,7 @@ import matplotlib.ticker as ticker
 from future import _MONTH_TO_CODE_, _CODE_TO_MONTH_, IRFuture
 from date_util import get_nth_weekday_of_month, next_imm_date, day_count
 from curve import USDCurve
-from math_util import _implied_normal_vol, _normal_greek
+from math_util import _implied_normal_vol, _normal_greek, _normal_price
 
 ########################################################################################################################
 # Options utilities
@@ -100,8 +101,7 @@ def parse_sofr_option_ticker(bbg_ticker: str):
             cps = 0
         return chain, expiry_code, underlying_ticker, expiry, cps, strike
     except:
-        return chain, expiry, underlying_ticker, expiry
-
+        return chain, expiry_code, underlying_ticker, expiry
 
 def get_live_sofr_options(reference_date: dt.datetime):
     """
@@ -255,7 +255,10 @@ class SOFRFutureOptionVolGrid:
         :return:
         """
         _, _, underlying, _ = parse_sofr_option_ticker(chain)
-        fut_price = self.curve.market_data["SOFR3M"][underlying]
+        if underlying in self.curve.market_data.get("SOFR3M", pd.Series()).index:
+            fut_price = self.curve.market_data["SOFR3M"][underlying]
+        else:
+            fut_price = self.curve.price_3m_futures([underlying]).squeeze()
         atm_vol = self.vol_grid[chain](fut_price)
         return fut_price, atm_vol
 
@@ -278,6 +281,7 @@ class SOFRFutureOptionVolGrid:
         grid = pd.DataFrame(vols, index=strikes)
 
         # Plotting the line plot for grid with specified style (thin dotted opaque blue)
+        plt.figure()
         plt.plot(grid.index, grid.values, linestyle=':', linewidth=1, color=(0, 0, 1, 0.5), label='Vol Grid')
 
         # Overlaying scatter plot for mkt (black dots, size 2)
@@ -329,87 +333,61 @@ class SOFRFutureOptionVolGrid:
         plt.tight_layout()
         plt.show()
 
-def curve_shock(vol_grid: SOFRFutureOptionVolGrid,
-                new_curve: USDCurve):
+def shock_surface_by_curve(vol_grid: SOFRFutureOptionVolGrid,
+                           new_curve: USDCurve,
+                           backbone: float = 0,
+                           new_surface: bool = True):
     """
     Shock a vol_grid with a rate scenario in a sticky delta fashion -> same delta options have same vol
+    :param new_surface:
+    :param backbone:
     :param vol_grid:
     :param new_curve:
     :return:
     """
-    pass
+    if new_surface:
+        vol_grid = deepcopy(vol_grid)
+    for chain, df in vol_grid.option_data.items():
+        # Get new underlying price
+        _, _, underlying_ticker, _ = parse_sofr_option_ticker(chain)
+        if underlying_ticker in new_curve.market_data["SOFR3M"].index:
+            underlying_price_new = new_curve.market_data["SOFR3M"][underlying_ticker]
+        else:
+            underlying_price_new = new_curve.price_3m_futures([underlying_ticker]).squeeze()
 
+        # Get old underlying price and atm vol
+        underlying_price_old, atm_vol_old = vol_grid.atm(chain)
+        price_shift = underlying_price_new - underlying_price_old
+        vol_shift = 1e2 * price_shift * backbone
 
-########################################################################################################################
-# Debug Routines
-########################################################################################################################
-def debug_parsing():
-    # Example usage:
-    chain, exp, tick, exp_dt = parse_sofr_option_ticker('SFRH25')
-    print(f"Chain: {chain}, Expiry: {exp}, Underlying: {tick}, ExpiryDate: {exp_dt.date()}")
+        # Shift the vol
+        df["vol"] = vol_grid.vol_grid[chain](df["strike"] - price_shift) + vol_shift
+        df["underlying_price"] = df["underlying_price"] + price_shift
+        df["otm"] = np.where(df["cp"] == 2, True,
+                             np.where(df["cp"] == 1, df["strike"] >= df["underlying_price"],
+                                      df["strike"] <= df["underlying_price"]))
+        df["premium"] = _normal_price(df["disc"].values.squeeze(),
+                                      df["t2e"].values.squeeze(),
+                                      df["underlying_price"].values.squeeze(),
+                                      df["strike"].values.squeeze(),
+                                      df["vol"].values.squeeze(),
+                                      df["cp"].values.squeeze())
+        # Compute greeks
+        d, g, v, t = _normal_greek(df["disc"].values.squeeze(),
+                                   df["t2e"].values.squeeze(),
+                                   df["underlying_price"].values.squeeze(),
+                                   df["strike"].values.squeeze(),
+                                   df["vol"].values.squeeze(),
+                                   df["cp"].values.squeeze())
+        df["delta"] = d
+        df["gamma"] = g
+        df["vega"] = v
+        df["theta"] = t * 1 / 252
 
-    chain, exp, tick, exp_dt = parse_sofr_option_ticker('0QZ23')
-    print(f"Chain: {chain}, Expiry: {exp}, Underlying: {tick}, ExpiryDate: {exp_dt.date()}")
+    vol_grid.curve = new_curve
+    vol_grid.calibrate_vol_grid()
+    return vol_grid
 
-    # Generate tickers as of today
-    today = dt.datetime.now()
-    live = get_live_sofr_options(today)
-    print(f"Today's live SOFR options: {live}")
-
-    exp = get_live_expiries(today, "SFRZ4")
-    print(f"Today's expiries for SFRZ24 futures: {exp}")
-
-def debug_option_pricing():
-    sofr3m = pd.Series({
-        "SFRU4": 95.2175,
-        "SFRZ4": 95.635,
-        "SFRH5": 96.05,
-        "SFRM5": 96.355,
-        "SFRU5": 96.53,
-        "SFRZ5": 96.625,
-        "SFRH6": 96.67,
-        "SFRM6": 96.685,
-        "SFRU6": 96.675,
-    })
-    sofr1m = pd.Series({
-        "SERV4": 95.1525,
-        "SERX4": 95.325,
-        "SERZ4": 95.435,
-    })
-    market_data = pd.Series({
-        # Calls
-        "SFRZ4C 95.25":	    0.3875,
-        "SFRZ4C 95.375":	0.27,
-        "SFRZ4C 95.50":	    0.1725,
-        "SFRZ4C 95.625":	0.095,
-        "SFRZ4C 95.75":	    0.0475,
-        "SFRZ4C 95.875":	0.03,
-        "SFRZ4C 96.00":	    0.02,
-        "SFRZ4C 96.125":	0.015,
-        "SFRZ4C 96.25":	    0.01,
-        "SFRZ4C 96.375":	0.01,
-        "SFRZ4C 96.50":	    0.0075,
-        "SFRZ4C 96.625":    0.005,
-        "SFRZ4C 96.75":     0.005,
-        # Puts
-        "SFRZ4P 95.875":	0.2675,
-        "SFRZ4P 95.750":	0.1625,
-        "SFRZ4P 95.625":	0.085,
-        "SFRZ4P 95.500":	0.0375,
-        "SFRZ4P 95.375":	0.0125,
-        "SFRZ4P 95.250":	0.005,
-        "SFRZ4P 95.125":	0.0025,
-        "SFRZ4P 95.000":	0.0025,
-        "SFRZ4P 94.875":    0.0025
-    })
-
-    ref_date = dt.datetime(2024, 10, 18)
-    sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(sofr1m, sofr3m)
-    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
-    vol_grid.plot_smile("SFRZ4")
-    exit(0)
 
 if __name__ == '__main__':
-    # debug_parsing()
-    debug_option_pricing()
-    exit(0)
+    pass

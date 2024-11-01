@@ -230,18 +230,117 @@ def debug_shock_future():
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
-    old_effr = sofr._effective_rates
+    old_effr = sofr.get_effective_rates()
     sofr.calculate_future_swap_spread()
     old_convexity = sofr.future_swap_spread.values.squeeze()
 
     sofr = shock_curve(sofr, "zero_rate", 10, "additive_bps", True)
     new_convexity = sofr.future_swap_spread.values.squeeze()
-    new_effr = sofr._effective_rates
+    new_effr = sofr.get_effective_rates()
     err = 1e2 * (old_convexity - new_convexity)
     assert np.abs(err).max() < 0.33
 
-    bump = 1e4 * (new_effr - old_effr)
+    bump = 1e2 * (new_effr - old_effr)
     assert np.round(np.abs(bump).mean(), 1) == 10.0
+
+########################################################################################################################
+# Vol testing
+########################################################################################################################
+sofr3m = pd.Series({
+        "SFRU4": 95.2175,
+        "SFRZ4": 95.635,
+        "SFRH5": 96.05,
+        "SFRM5": 96.355,
+        "SFRU5": 96.53,
+        "SFRZ5": 96.625,
+        "SFRH6": 96.67,
+        "SFRM6": 96.685,
+        "SFRU6": 96.675,
+    })
+market_data = pd.Series({
+    # Calls
+    "SFRZ4C 95.25":	    0.3875,
+    "SFRZ4C 95.375":	0.27,
+    "SFRZ4C 95.50":	    0.1725,
+    "SFRZ4C 95.625":	0.095,
+    "SFRZ4C 95.75":	    0.0475,
+    "SFRZ4C 95.875":	0.03,
+    "SFRZ4C 96.00":	    0.02,
+    "SFRZ4C 96.125":	0.015,
+    "SFRZ4C 96.25":	    0.01,
+    "SFRZ4C 96.375":	0.01,
+    "SFRZ4C 96.50":	    0.0075,
+    "SFRZ4C 96.625":    0.005,
+    "SFRZ4C 96.75":     0.005,
+    # Puts
+    "SFRZ4P 95.875":	0.2675,
+    "SFRZ4P 95.750":	0.1625,
+    "SFRZ4P 95.625":	0.085,
+    "SFRZ4P 95.500":	0.0375,
+    "SFRZ4P 95.375":	0.0125,
+    "SFRZ4P 95.250":	0.005,
+    "SFRZ4P 95.125":	0.0025,
+    "SFRZ4P 95.000":	0.0025,
+    "SFRZ4P 94.875":    0.0025
+})
+
+def debug_option_parsing():
+    from future_option import parse_sofr_option_ticker
+    # Example usage:
+    chain, exp, tick, exp_dt = parse_sofr_option_ticker('SFRH25')
+    assert chain == 'SFRH5'
+    assert exp == 'H5'
+    assert tick == "SFRH5"
+    assert exp_dt == dt.datetime(2025, 3, 14, 15)
+
+    chain, exp, tick, exp_dt = parse_sofr_option_ticker('0QZ23')
+    assert chain == '0QZ3'
+    assert exp == 'Z3'
+    assert tick == 'SFRZ4'
+    assert exp_dt == dt.datetime(2023, 12, 15, 15, 0)
+
+
+def debug_option_generation():
+    from future_option import get_live_sofr_options, get_live_expiries
+    # Generate tickers as of today
+    today = dt.datetime.now()
+    live = get_live_sofr_options(today)
+    assert live[0] == "SFRX4"
+    assert live[-1] == "SFRU8"
+    assert len(live) == 74
+
+    exp = get_live_expiries(today, "SFRZ4")
+    assert exp == ['SFRX4', 'SFRZ4']
+
+
+def debug_option_pricing():
+    from curve import USDCurve
+    from future_option import SOFRFutureOptionVolGrid
+    ref_date = dt.datetime(2024, 10, 18)
+    sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(futures_3m_prices=sofr3m)
+    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
+    underlying, atm = vol_grid.atm("SFRZ4")
+    assert underlying == 95.635
+    assert np.round(atm, 4) == 0.5770
+
+
+def debug_vol_gird_curve_change():
+    from curve import USDCurve, shock_curve
+    from future_option import SOFRFutureOptionVolGrid, shock_surface_by_curve
+    ref_date = dt.datetime(2024, 10, 18)
+    sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(futures_3m_prices=sofr3m)
+    sofr2 = shock_curve(sofr,
+                        "effective_rate",
+                        10,
+                        "additive_bps",
+                        False,
+                        new_curve=True)
+    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
+    df1 = vol_grid.option_data["SFRZ4"]
+    vol_grid2 = shock_surface_by_curve(vol_grid, sofr2, 0, True)
+    df2 = vol_grid2.option_data["SFRZ4"]
+    vol_chg = df2["vol"] - df1["vol"]
+    assert np.round(vol_chg.mean(), 4) == 0.0295
 
 def test_runner():
     total_tests = 0
@@ -273,5 +372,4 @@ def test_runner():
 
 if __name__ == '__main__':
     test_runner()
-
 

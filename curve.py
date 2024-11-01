@@ -44,6 +44,16 @@ class USDCurve:
         self._swap_knot_dates = None
         self._swap_knot_values = None
 
+    def get_effective_rates(self):
+        return pd.Series(1e2 * self._effective_rates,
+                         index=pd.DatetimeIndex(parse_date(self._fomc_effective_dates)),
+                         name=self.rate_name)
+
+    def get_zero_rates(self):
+        return pd.Series(1e2 * self._swap_knot_values,
+                         index=pd.DatetimeIndex(parse_date(self._swap_knot_dates)),
+                         name=self.rate_name)
+
     def make_swap(self, tenor: str) -> SOFRSwap:
         """
         This function makes a swap from a string. The string can be a spot starting tenor string,
@@ -648,7 +658,7 @@ def shock_curve(curve: USDCurve,
                 shock_amount: float | np.ndarray | tuple[np.ndarray, np.ndarray],
                 shock_type: str,
                 preserve_convexity=True,
-                new_curve=False,
+                new_curve=True,
                 ) -> USDCurve:
     """
     This function shocks a USD curve
@@ -662,8 +672,11 @@ def shock_curve(curve: USDCurve,
     :return:
     """
     output_curve = curve
-    if output_curve.future_swap_spread.empty:
-        output_curve.calculate_future_swap_spread(True)
+    if preserve_convexity:
+        if output_curve.future_swap_spread is None:
+            output_curve.calculate_future_swap_spread(True)
+        elif output_curve.future_swap_spread.empty:
+            output_curve.calculate_future_swap_spread(True)
     if new_curve:
         output_curve = deepcopy(curve)
     if shock_target.lower() == "zero_rate":
