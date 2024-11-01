@@ -5,7 +5,6 @@ from types import FunctionType
 from copy import deepcopy
 import re
 from dateutil.relativedelta import relativedelta
-from numba.core.ir import Raise
 from scipy.interpolate import CubicSpline
 from matplotlib import pyplot as plt
 import matplotlib.ticker as ticker

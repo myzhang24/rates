@@ -1,7 +1,6 @@
 import datetime as dt
-
 from dateutil.relativedelta import relativedelta
-from numba.cuda.cudadrv.devicearray import lru_cache
+from functools import lru_cache
 from pandas.tseries.offsets import MonthEnd
 from date_util import get_nth_weekday_of_month, next_imm_date
 
