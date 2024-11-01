@@ -165,9 +165,9 @@ def debug_sofr1m_calibration():
 def debug_sofr3m_calibration():
     from curve import USDCurve
     # SOFR3M
-    sofr3m = USDCurve("SOFR", "2024-10-09")
-    sofr3m.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
-    err = 1e2 * (sofr3m.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
+    sofr = USDCurve("SOFR", "2024-10-09")
+    sofr.calibrate_future_curve(futures_3m_prices=sofr_3m_prices)
+    err = 1e2 * (sofr.price_3m_futures(sofr_3m_prices.index) - sofr_3m_prices.values)
     assert np.abs(err).sum() < 2
 
 def debug_sofr_joint_calibration():
@@ -212,17 +212,17 @@ def debug_shock_swap():
     sofr = USDCurve("SOFR", "2024-10-09")
     sofr.calibrate_future_curve(futures_1m_prices=sofr_1m_prices, futures_3m_prices=sofr_3m_prices)
     sofr.calibrate_swap_curve(sofr_swaps_rates)
-    old_zero_rates = sofr._swap_knot_values
+    old_zero_rates = sofr.get_zero_rates()
     sofr.calculate_future_swap_spread()
     old_convexity = sofr.future_swap_spread.values.squeeze()
 
     sofr = shock_curve(sofr, "effective_rate", 10, "additive_bps", True)
     new_convexity = sofr.future_swap_spread.values.squeeze()
-    new_zero_rates = sofr._swap_knot_values
+    new_zero_rates = sofr.get_zero_rates()
     err = 1e2 * (old_convexity - new_convexity)
     assert np.abs(err).max() < 0.15
 
-    bump = 1e4 * (new_zero_rates - old_zero_rates)
+    bump = 1e2 * (new_zero_rates - old_zero_rates)
     assert np.round(np.abs(bump).mean(), 1) == 10.0
 
 def debug_shock_future():
@@ -343,7 +343,7 @@ def debug_vol_gird_curve_change():
     assert np.round(vol_chg.mean(), 4) == 0.0295
 
 def debug_vol_gird_shock():
-    from curve import USDCurve, shock_curve
+    from curve import USDCurve
     from future_option import SOFRFutureOptionVolGrid, shock_surface_vol
     ref_date = dt.datetime(2024, 10, 18)
     sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(futures_3m_prices=sofr3m)
