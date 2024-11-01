@@ -45,12 +45,12 @@ class USDCurve:
         self._swap_knot_values = None
 
     def get_effective_rates(self):
-        return pd.Series(1e2 * self._effective_rates,
+        return pd.Series(np.round(1e2 * self._effective_rates, 4),
                          index=pd.DatetimeIndex(parse_date(self._fomc_effective_dates)),
                          name=self.rate_name)
 
     def get_zero_rates(self):
-        return pd.Series(1e2 * self._swap_knot_values,
+        return pd.Series(np.round(1e2 * self._swap_knot_values, 4),
                          index=pd.DatetimeIndex(parse_date(self._swap_knot_dates)),
                          name=self.rate_name)
 
@@ -315,6 +315,7 @@ class USDCurve:
                              on_penalty: bool = True):
         """
         This function calibrates a swap curve's zero rate knots to prices swaps according to an input market
+        :param on_penalty:
         :param convexity:
         :param spot_rates:
         :return:
@@ -653,6 +654,33 @@ class USDCurve:
 ########################################################################################################################
 # External functionalities
 ########################################################################################################################
+def adjust_sofr1m(ff: pd.Series, sofr1m: pd.Series) -> pd.Series:
+    """
+    This function assumes linear basis with outliers for sofr-ff, and adjust SOFR1m futures prices
+    based on FF1m prices + model basis.
+    This is done because FF futures has sufficient liquidity and volume, where SOFR1M futures barely trades after front
+    contracts, and pricing is often off near the tail.
+    :param ff:
+    :param sofr1m:
+    :return:
+    """
+
+    market_basis = ff.values - sofr1m.values
+    adjusted_basis = market_basis.copy()
+
+    for i in range(len(market_basis)):
+        leave_one_out_values = np.delete(market_basis, i)
+        std = np.std(leave_one_out_values)
+        threshold = 2 * std
+        mean = np.mean(leave_one_out_values)
+
+        if market_basis[i] > mean + threshold:
+            adjusted_basis[i] = mean
+        elif market_basis[i] < mean - threshold:
+            adjusted_basis[i] = mean
+
+    return pd.Series(np.round(ff.values - adjusted_basis, 4), index=sofr1m.index, name="SOFR1M")
+
 def shock_curve(curve: USDCurve,
                 shock_target: str,
                 shock_amount: float | np.ndarray | tuple[np.ndarray, np.ndarray],

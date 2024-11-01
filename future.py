@@ -104,7 +104,7 @@ def live_futures(date: dt.datetime, future: str = "sofr3m"):
 
     if future.lower() == "ff" or future.lower() == "sofr1m":
         prefix = "FF" if future.lower() == "ff" else "SER"
-        for i in range(13):
+        for i in range(12):
             year = date.year + ((date.month + i - 1) // 12)
             month = (date.month + i - 1) % 12 + 1
             month_code = _MONTH_TO_CODE_[month]
