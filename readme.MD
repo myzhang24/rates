@@ -1,4 +1,4 @@
-# Financial Analytics Toolkit
+# Rates Analytics Toolkit
 
 This toolkit provides a collection of modules to facilitate various financial analytics, specifically targeting fixed-income instruments, futures, options, and swaps. It includes utilities for curve construction, date calculations, and mathematical operations essential for financial computations.
 
@@ -15,7 +15,7 @@ This toolkit provides a collection of modules to facilitate various financial an
 
 ## Prerequisites
 
-- Python 3.10
+- Python 3.10+
 - Required libraries (see `requirements.txt` for details)
 
 ## Installation
@@ -24,5 +24,4 @@ Clone the repository and install the required dependencies:
 
 ```bash
 git clone https://github.com/myzhang24/rates.git
-cd financial-analytics-toolkit
 pip install -r requirements.txt
