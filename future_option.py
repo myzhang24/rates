@@ -1,9 +1,11 @@
 import datetime as dt
 import numpy as np
 import pandas as pd
+from types import FunctionType
 from copy import deepcopy
 import re
 from dateutil.relativedelta import relativedelta
+from numba.core.ir import Raise
 from scipy.interpolate import CubicSpline
 from matplotlib import pyplot as plt
 import matplotlib.ticker as ticker
@@ -235,14 +237,20 @@ class SOFRFutureOptionVolGrid:
             df["theta"] = t * 1 / 252
         return self
 
-    def calibrate_vol_grid(self, method="cubic"):
+    def calibrate_vol_grid(self, chain: str = None, method: str = "cubic"):
         if method == "cubic":
+            if chain is not None:
+                df = self.option_data[chain]
+                otm_vol = df.loc[df["otm"] == 1, ["strike", "vol"]].sort_values("strike")
+                cb = CubicSpline(otm_vol["strike"], otm_vol["vol"], bc_type="natural")
+                self.vol_grid[chain] = cb
+                return self
             for key, vols in self.option_data.items():
                 otm_vol = vols.loc[vols["otm"] == 1, ["strike", "vol"]].sort_values("strike")
                 cb = CubicSpline(otm_vol["strike"], otm_vol["vol"], bc_type="natural")
                 self.vol_grid[key] = cb
-        if method == "SABR":
-            pass
+        else:
+            raise Exception("Only cubic spline interpolation method is implemented for vol grid")
         return self
 
     def vol_grid_price(self, tickers: list | pd.Series):
@@ -333,10 +341,58 @@ class SOFRFutureOptionVolGrid:
         plt.tight_layout()
         plt.show()
 
-def shock_surface_by_curve(vol_grid: SOFRFutureOptionVolGrid,
-                           new_curve: USDCurve,
-                           backbone: float = 0,
-                           new_surface: bool = True):
+    def reprice(self, chain: str = None):
+        if chain is not None:
+            df = self.option_data[chain]
+            df["premium"] = _normal_price(df["disc"].values.squeeze(),
+                                          df["t2e"].values.squeeze(),
+                                          df["underlying_price"].values.squeeze(),
+                                          df["strike"].values.squeeze(),
+                                          df["vol"].values.squeeze(),
+                                          df["cp"].values.squeeze())
+            # Compute greeks
+            d, g, v, t = _normal_greek(df["disc"].values.squeeze(),
+                                       df["t2e"].values.squeeze(),
+                                       df["underlying_price"].values.squeeze(),
+                                       df["strike"].values.squeeze(),
+                                       df["vol"].values.squeeze(),
+                                       df["cp"].values.squeeze())
+            df["delta"] = d
+            df["gamma"] = g
+            df["vega"] = v
+            df["theta"] = t * 1 / 252
+            self.calibrate_vol_grid(chain)
+            return self
+
+        # Reprice everything
+        for chain, df in self.option_data.items():
+            df["premium"] = _normal_price(df["disc"].values.squeeze(),
+                                          df["t2e"].values.squeeze(),
+                                          df["underlying_price"].values.squeeze(),
+                                          df["strike"].values.squeeze(),
+                                          df["vol"].values.squeeze(),
+                                          df["cp"].values.squeeze())
+            # Compute greeks
+            d, g, v, t = _normal_greek(df["disc"].values.squeeze(),
+                                       df["t2e"].values.squeeze(),
+                                       df["underlying_price"].values.squeeze(),
+                                       df["strike"].values.squeeze(),
+                                       df["vol"].values.squeeze(),
+                                       df["cp"].values.squeeze())
+            df["delta"] = d
+            df["gamma"] = g
+            df["vega"] = v
+            df["theta"] = t * 1 / 252
+        self.calibrate_vol_grid()
+        return self
+
+########################################################################################################################
+# Shocking functionalities
+########################################################################################################################
+def shock_surface_curve(vol_grid: SOFRFutureOptionVolGrid,
+                        new_curve: USDCurve,
+                        backbone: float = 0,
+                        new_surface: bool = True):
     """
     Shock a vol_grid with a rate scenario in a sticky delta fashion -> same delta options have same vol
     :param new_surface:
@@ -366,28 +422,45 @@ def shock_surface_by_curve(vol_grid: SOFRFutureOptionVolGrid,
         df["otm"] = np.where(df["cp"] == 2, True,
                              np.where(df["cp"] == 1, df["strike"] >= df["underlying_price"],
                                       df["strike"] <= df["underlying_price"]))
-        df["premium"] = _normal_price(df["disc"].values.squeeze(),
-                                      df["t2e"].values.squeeze(),
-                                      df["underlying_price"].values.squeeze(),
-                                      df["strike"].values.squeeze(),
-                                      df["vol"].values.squeeze(),
-                                      df["cp"].values.squeeze())
-        # Compute greeks
-        d, g, v, t = _normal_greek(df["disc"].values.squeeze(),
-                                   df["t2e"].values.squeeze(),
-                                   df["underlying_price"].values.squeeze(),
-                                   df["strike"].values.squeeze(),
-                                   df["vol"].values.squeeze(),
-                                   df["cp"].values.squeeze())
-        df["delta"] = d
-        df["gamma"] = g
-        df["vega"] = v
-        df["theta"] = t * 1 / 252
+
 
     vol_grid.curve = new_curve
     vol_grid.calibrate_vol_grid()
     return vol_grid
 
+def shock_surface_vol(vol_grid: SOFRFutureOptionVolGrid,
+                      chain: str = None,
+                      shock_type: str = "additive",
+                      shock: float | FunctionType = 0.01,
+                      new_surface: bool = True):
+    if new_surface:
+        vol_grid = deepcopy(vol_grid)
+    if chain is not None:
+        df = vol_grid.option_data[chain]
+        shock_amount = shock if isinstance(shock, float) else shock(df["strike"], df["underlying_price"], df["cp"])
+        if shock_type == "additive":
+            df["vol"] += shock_amount
+        elif shock_type == "multiplicative":
+            df["vol"] *= shock_amount
+        else:
+            raise Exception("Only additive and multiplicative shocking are implemented")
+        vol_grid.reprice(chain)
+        vol_grid.calibrate_vol_grid(chain)
+        return vol_grid
+
+    # If shock all chains
+    for chain, df in vol_grid.option_data.items():
+        shock_amount = shock if isinstance(shock, float) else shock(df["strike"], df["underlying_price"], df["cp"])
+        if shock_type == "additive":
+            df["vol"] += shock_amount
+        elif shock_type == "multiplicative":
+            df["vol"] *= shock_amount
+        else:
+            raise Exception("Only additive and multiplicative shocking are implemented")
+
+    vol_grid.reprice()
+    vol_grid.calibrate_vol_grid()
+    return vol_grid
 
 if __name__ == '__main__':
     pass

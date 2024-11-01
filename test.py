@@ -326,7 +326,7 @@ def debug_option_pricing():
 
 def debug_vol_gird_curve_change():
     from curve import USDCurve, shock_curve
-    from future_option import SOFRFutureOptionVolGrid, shock_surface_by_curve
+    from future_option import SOFRFutureOptionVolGrid, shock_surface_curve
     ref_date = dt.datetime(2024, 10, 18)
     sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(futures_3m_prices=sofr3m)
     sofr2 = shock_curve(sofr,
@@ -337,10 +337,22 @@ def debug_vol_gird_curve_change():
                         new_curve=True)
     vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
     df1 = vol_grid.option_data["SFRZ4"]
-    vol_grid2 = shock_surface_by_curve(vol_grid, sofr2, 0, True)
+    vol_grid2 = shock_surface_curve(vol_grid, sofr2, 0, True)
     df2 = vol_grid2.option_data["SFRZ4"]
     vol_chg = df2["vol"] - df1["vol"]
     assert np.round(vol_chg.mean(), 4) == 0.0295
+
+def debug_vol_gird_shock():
+    from curve import USDCurve, shock_curve
+    from future_option import SOFRFutureOptionVolGrid, shock_surface_vol
+    ref_date = dt.datetime(2024, 10, 18)
+    sofr = USDCurve("SOFR", ref_date).calibrate_future_curve(futures_3m_prices=sofr3m)
+    vol_grid = SOFRFutureOptionVolGrid(sofr).load_option_data(market_data).calibrate_vol_grid()
+    df1 = vol_grid.option_data["SFRZ4"]
+    vol_grid2 = shock_surface_vol(vol_grid, "SFRZ4", "additive", 0.1, True)
+    df2 = vol_grid2.option_data["SFRZ4"]
+    vol_chg = df2["vol"] - df1["vol"]
+    assert np.all(np.round(vol_chg, 4) == 0.1)
 
 def test_runner():
     total_tests = 0
@@ -372,4 +384,3 @@ def test_runner():
 
 if __name__ == '__main__':
     test_runner()
-
